@@ -13,9 +13,17 @@ Usage:
 from __future__ import annotations
 
 import sys
+import time
 
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+# Pause between dates so back-to-back propagate() calls don't hit Reddit's
+# RSS search within the same per-IP rate-limit window. Each date now makes a
+# single combined multi-subreddit request (see dataflows/reddit.py #1142),
+# but Reddit's bucket has been observed taking up to ~60s to refill, so this
+# still needs to be a real gap rather than a token pause.
+INTER_DATE_DELAY_SECONDS = 60
 
 # Portfolio Manager rating -> expected direction of the subsequent move.
 RATING_DIRECTION = {
@@ -39,7 +47,9 @@ def main():
     benchmark = ta._resolve_benchmark(ticker)
 
     rows = []
-    for date in dates:
+    for i, date in enumerate(dates):
+        if i > 0:
+            time.sleep(INTER_DATE_DELAY_SECONDS)
         print(f"\n=== {ticker} @ {date} ===")
         _, rating = ta.propagate(ticker, date)
         raw, alpha, days = ta._fetch_returns(ticker, date, benchmark=benchmark)

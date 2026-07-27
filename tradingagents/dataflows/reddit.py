@@ -6,9 +6,20 @@ Default path is Reddit's public Atom/RSS search feed
 (issue #862), and probing it on every call only doubled our request volume
 against Reddit's per-IP rate limit — tripping ``429`` on the RSS fallback — so
 it is kept (``_fetch_subreddit_json``) but not used by default. On a 429 we back
-off once (honouring ``Retry-After``). RSS lacks score / comment counts, so those
-posts are marked and the formatter omits the metrics rather than printing fake
-zeros.
+off once (honouring ``Retry-After``, or the ``X-Ratelimit-Reset`` seconds Reddit
+actually sends on this endpoint when ``Retry-After`` is absent). RSS lacks score
+/ comment counts, so those posts are marked and the formatter omits the metrics
+rather than printing fake zeros.
+
+Reddit's per-IP RSS rate limit turned out to be a single bucket shared across
+*all* subreddits/paths — observed at roughly one request per 30-60s, not the
+"~1 req/s, occasional 429" the original per-subreddit loop assumed. Issuing
+three separate per-subreddit requests burned through that shared bucket on the
+2nd/3rd call every time (#1142). ``fetch_reddit_posts`` now issues a single
+request against Reddit's multi-subreddit search path
+(``r/sub1+sub2+sub3/search.rss``), which stays within the one-request budget;
+each entry carries a ``<category term="sub">`` tag used to sort it back into
+its subreddit.
 
 No API key required. Returns formatted plaintext blocks ready for prompt
 injection and degrades gracefully — returns a placeholder string rather than
@@ -82,12 +93,27 @@ def _strip_html(content: str) -> str:
 
 
 def _retry_after_seconds(exc: HTTPError) -> float | None:
-    """Seconds to wait from a 429's ``Retry-After`` header, capped at 30s."""
-    try:
-        val = exc.headers.get("Retry-After") if getattr(exc, "headers", None) else None
-        return min(float(val), 30.0) if val else None
-    except (ValueError, TypeError, AttributeError):
+    """Seconds to wait before retrying a 429.
+
+    Reddit's RSS search endpoint doesn't send ``Retry-After`` in practice —
+    it sends ``X-Ratelimit-Reset`` (seconds until the per-IP bucket refills),
+    which is what actually governs when the next request will succeed. Prefer
+    ``Retry-After`` when present, fall back to the reset counter plus a small
+    buffer, and cap either at 65s (observed reset windows run up to ~60s).
+    """
+    headers = getattr(exc, "headers", None)
+    if not headers:
         return None
+    try:
+        retry_after = headers.get("Retry-After")
+        if retry_after:
+            return min(float(retry_after), 65.0)
+        reset = headers.get("X-Ratelimit-Reset")
+        if reset:
+            return min(float(reset) + 1.0, 65.0)
+    except (ValueError, TypeError):
+        return None
+    return None
 
 
 def _fetch_subreddit_rss(
@@ -99,10 +125,17 @@ def _fetch_subreddit_rss(
 ) -> list[dict]:
     """Default path: parse the public Atom search feed for a subreddit.
 
+    ``sub`` may be a single subreddit (``"stocks"``) or a Reddit multireddit
+    path (``"stocks+investing"``) — both hit the same endpoint and the same
+    per-IP rate-limit bucket, so combining subreddits into one call is how
+    callers stay under it. Each entry's ``<category term="...">`` tag names
+    the subreddit it actually came from, captured as ``post["subreddit"]``.
+
     Carries no score / comment counts, so those fields are left None and the
     post is tagged ``source="rss"`` for honest display. On a 429 (Reddit's
-    per-IP rate limit) we back off once — honouring ``Retry-After`` when
-    present — before giving up, so a transient burst doesn't blank the feed.
+    per-IP rate limit) we back off once — honouring ``Retry-After`` /
+    ``X-Ratelimit-Reset`` — before giving up, so a transient burst doesn't
+    blank the feed.
     """
     url = _RSS.format(sub=sub, qs=_search_qs(ticker, limit))
     req = Request(url, headers={"User-Agent": _UA})
@@ -111,7 +144,7 @@ def _fetch_subreddit_rss(
             root = ET.fromstring(resp.read())
     except HTTPError as exc:
         if exc.code == 429 and _retry:
-            wait = _retry_after_seconds(exc) or 5.0
+            wait = _retry_after_seconds(exc) or 30.0
             logger.warning(
                 "Reddit RSS 429 for r/%s · %s — backing off %.1fs then retrying once",
                 sub, ticker, wait,
@@ -131,6 +164,7 @@ def _fetch_subreddit_rss(
         title_el = entry.find("atom:title", _ATOM_NS)
         published_el = entry.find("atom:published", _ATOM_NS)
         content_el = entry.find("atom:content", _ATOM_NS)
+        category_el = entry.find("atom:category", _ATOM_NS)
         posts.append({
             "title": (title_el.text if title_el is not None else "") or "",
             "score": None,
@@ -140,6 +174,7 @@ def _fetch_subreddit_rss(
             ),
             "selftext": _strip_html(content_el.text if content_el is not None else ""),
             "source": "rss",
+            "subreddit": (category_el.get("term") if category_el is not None else None) or sub,
         })
     return posts
 
@@ -193,24 +228,35 @@ def fetch_reddit_posts(
     subreddits: Iterable[str] = DEFAULT_SUBREDDITS,
     limit_per_sub: int = 5,
     timeout: float = 10.0,
-    inter_request_delay: float = 1.0,
 ) -> str:
     """Fetch recent Reddit posts mentioning ``ticker`` across finance
     subreddits and return them as a formatted plaintext block.
 
-    ``inter_request_delay`` paces the (now RSS-only) per-subreddit requests to
-    stay under Reddit's public per-IP rate limit; combined with the RSS-first
-    path it makes 429s rare even when several analyses run back-to-back.
+    Issues a single request against Reddit's multi-subreddit search path
+    (``r/sub1+sub2+sub3``) instead of one request per subreddit: Reddit's
+    per-IP RSS rate limit is one bucket shared across every subreddit, so N
+    separate requests burned through it on the 2nd/3rd subreddit every time
+    (#1142). Posts are sorted back into their subreddit via the ``subreddit``
+    field ``_fetch_subreddit_rss`` reads from each entry's Atom category tag.
     """
     # Crypto reaches us as a Yahoo pair (BTC-USD); search Reddit for the base
     # ("BTC") so the query actually matches discussion instead of near-nothing.
     ticker = crypto_base(ticker) or ticker
+    subreddits = tuple(subreddits)
+    combined_sub = "+".join(subreddits)
+    all_posts = _fetch_subreddit(ticker, combined_sub, limit_per_sub * len(subreddits), timeout)
+
+    by_sub: dict[str, list[dict]] = {sub: [] for sub in subreddits}
+    only_sub = subreddits[0] if len(subreddits) == 1 else None
+    for post in all_posts:
+        sub = post.get("subreddit") or only_sub
+        if sub in by_sub and len(by_sub[sub]) < limit_per_sub:
+            by_sub[sub].append(post)
+
     blocks = []
     total_posts = 0
-    for i, sub in enumerate(subreddits):
-        if i > 0:
-            time.sleep(inter_request_delay)
-        posts = _fetch_subreddit(ticker, sub, limit_per_sub, timeout)
+    for sub in subreddits:
+        posts = by_sub[sub]
         total_posts += len(posts)
         if not posts:
             blocks.append(f"r/{sub}: <no posts found mentioning {ticker.upper()} in the past 7 days>")

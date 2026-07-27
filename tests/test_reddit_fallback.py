@@ -17,11 +17,13 @@ _SAMPLE_ATOM = """<?xml version="1.0" encoding="UTF-8"?>
     <title>NVDA earnings beat, stock pops</title>
     <published>2026-05-20T14:30:00+00:00</published>
     <content type="html">&lt;!-- SC_OFF --&gt;&lt;div class="md"&gt;&lt;p&gt;Great &lt;b&gt;quarter&lt;/b&gt; for NVDA&amp;#39;s datacenter unit.&lt;/p&gt;&lt;/div&gt;&lt;!-- SC_ON --&gt;</content>
+    <category term="stocks" label="r/stocks"/>
   </entry>
   <entry>
     <title>Is NVDA overvalued?</title>
     <published>2026-05-19T09:00:00Z</published>
     <content type="html">&lt;p&gt;Forward P/E discussion&lt;/p&gt;</content>
+    <category term="investing" label="r/investing"/>
   </entry>
 </feed>
 """
@@ -84,6 +86,18 @@ class TestRssParsing:
         assert posts[0]["num_comments"] is None
         assert posts[0]["created_utc"] > 0
         assert "datacenter unit" in posts[0]["selftext"]
+        # The category tag identifies the true source subreddit — needed to
+        # sort entries back out of a combined multi-subreddit request.
+        assert posts[0]["subreddit"] == "stocks"
+        assert posts[1]["subreddit"] == "investing"
+
+    def test_missing_category_falls_back_to_requested_sub(self):
+        no_category_atom = _SAMPLE_ATOM.replace(
+            '<category term="stocks" label="r/stocks"/>', ""
+        ).replace('<category term="investing" label="r/investing"/>', "")
+        with patch.object(reddit, "urlopen", return_value=_resp(lambda: no_category_atom.encode())):
+            posts = reddit._fetch_subreddit_rss("NVDA", "stocks", limit=5, timeout=5.0)
+        assert posts[0]["subreddit"] == "stocks"
 
     def test_malformed_xml_fails_open(self):
         with patch.object(reddit, "urlopen", return_value=_resp(lambda: b"<<not xml>>")):
@@ -147,6 +161,15 @@ class TestRss429Backoff:
             reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0)
         slept.assert_called_once_with(12.0)
 
+    def test_ratelimit_reset_header_used_when_no_retry_after(self):
+        """Reddit's RSS endpoint sends X-Ratelimit-Reset, not Retry-After —
+        the backoff must actually honour it instead of a short fixed guess."""
+        err = HTTPError("url", 429, "Too Many Requests", {"X-Ratelimit-Reset": "27"}, None)
+        with patch.object(reddit, "urlopen", side_effect=[err, _atom_resp()]), \
+             patch.object(reddit.time, "sleep") as slept:
+            reddit._fetch_subreddit_rss("NVDA", "stocks", 5, 5.0)
+        slept.assert_called_once_with(28.0)
+
 
 @pytest.mark.unit
 class TestChunkedTransferErrorsHandled:
@@ -170,10 +193,10 @@ class TestFormatterHandlesRssPosts:
         rss_posts = [{
             "title": "NVDA pops", "score": None, "num_comments": None,
             "created_utc": reddit._iso_to_timestamp("2026-05-20T14:30:00Z"),
-            "selftext": "great quarter", "source": "rss",
+            "selftext": "great quarter", "source": "rss", "subreddit": "stocks",
         }]
         with patch.object(reddit, "_fetch_subreddit", return_value=rss_posts):
-            out = reddit.fetch_reddit_posts("NVDA", subreddits=("stocks",), inter_request_delay=0)
+            out = reddit.fetch_reddit_posts("NVDA", subreddits=("stocks",))
         assert "via RSS feed" in out
         assert "↑" not in out  # no fake score arrow
         assert "NVDA pops" in out
@@ -183,13 +206,34 @@ class TestFormatterHandlesRssPosts:
         json_posts = [{
             "title": "NVDA pops", "score": 1234, "num_comments": 56,
             "created_utc": reddit._iso_to_timestamp("2026-05-20T14:30:00Z"),
-            "selftext": "",
+            "selftext": "", "subreddit": "stocks",
         }]
         with patch.object(reddit, "_fetch_subreddit", return_value=json_posts):
-            out = reddit.fetch_reddit_posts("NVDA", subreddits=("stocks",), inter_request_delay=0)
+            out = reddit.fetch_reddit_posts("NVDA", subreddits=("stocks",))
         assert "1234↑" in out
         assert "56c" in out
         assert "via RSS" not in out
+
+
+@pytest.mark.unit
+class TestFetchRedditPostsIsOneRequest:
+    """The fix for #1142: Reddit's per-IP RSS bucket is shared across every
+    subreddit, so N per-subreddit requests 429'd on the 2nd/3rd call. A single
+    combined multi-subreddit request must replace that loop."""
+
+    def test_combines_subreddits_into_a_single_call(self):
+        combined_posts = [
+            {"title": "wsb post", "score": None, "num_comments": None,
+             "created_utc": None, "selftext": "", "source": "rss", "subreddit": "wallstreetbets"},
+            {"title": "stocks post", "score": None, "num_comments": None,
+             "created_utc": None, "selftext": "", "source": "rss", "subreddit": "stocks"},
+        ]
+        with patch.object(reddit, "_fetch_subreddit", return_value=combined_posts) as fetch:
+            out = reddit.fetch_reddit_posts("NVDA", subreddits=("wallstreetbets", "stocks", "investing"))
+        fetch.assert_called_once_with("NVDA", "wallstreetbets+stocks+investing", 15, 10.0)
+        assert "wsb post" in out
+        assert "stocks post" in out
+        assert "r/investing: <no posts found" in out
 
 
 @pytest.mark.unit
@@ -204,7 +248,7 @@ class TestCryptoSearchTerm:
             return []
 
         with patch.object(reddit, "_fetch_subreddit", side_effect=fake_fetch):
-            reddit.fetch_reddit_posts(ticker, subreddits=("stocks",), inter_request_delay=0)
+            reddit.fetch_reddit_posts(ticker, subreddits=("stocks",))
         return seen["ticker"]
 
     def test_crypto_pair_searches_base(self):

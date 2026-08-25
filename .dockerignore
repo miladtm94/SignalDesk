@@ -11,5 +11,8 @@ build
 dist
 results
 eval_results
+backend/data
+frontend/node_modules
+frontend/dist
 Dockerfile
 docker-compose.yml

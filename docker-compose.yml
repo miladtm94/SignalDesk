@@ -1,4 +1,29 @@
 services:
+  web-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      - TRADING_CONSOLE_HOST=0.0.0.0
+      - TRADING_CONSOLE_CORS_ORIGINS=http://localhost:4173,http://127.0.0.1:4173
+    volumes:
+      - research_console_data:/app/backend/data
+    ports:
+      - "127.0.0.1:8765:8000"
+    restart: unless-stopped
+
+  web-frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - web-backend
+    ports:
+      - "127.0.0.1:4173:80"
+    restart: unless-stopped
+
   tradingagents:
     build: .
     env_file:
@@ -32,5 +57,6 @@ services:
       - ollama
 
 volumes:
+  research_console_data:
   tradingagents_data:
   ollama_data:

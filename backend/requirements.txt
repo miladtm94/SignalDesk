@@ -1,0 +1,8 @@
+# Web console runtime. The upstream package is intentionally pinned to the
+# release this adapter was verified against; see docs/UPSTREAM_UPGRADE.md.
+tradingagents @ git+https://github.com/TauricResearch/TradingAgents.git@v0.3.1
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+SQLAlchemy==2.0.36
+cryptography==44.0.0
+pydantic==2.10.4

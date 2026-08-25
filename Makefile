@@ -1,7 +1,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: venv install test lint fetch sync push status backtest
+.PHONY: venv install test lint web-install web-dev web-test web-build fetch sync push status backtest
 
 venv:
 	python3 -m venv $(VENV)
@@ -15,6 +15,19 @@ test:
 
 lint:
 	$(PYTHON) -m ruff check .
+
+web-install:
+	$(PYTHON) -m pip install -r backend/requirements-dev.txt
+	cd frontend && npm install
+
+web-dev:
+	$(PYTHON) -m backend.app.dev
+
+web-test:
+	$(PYTHON) -m pytest backend/tests
+
+web-build:
+	cd frontend && npm run build
 
 # Fetch latest changes from your fork (origin) and the original repo (upstream)
 fetch:

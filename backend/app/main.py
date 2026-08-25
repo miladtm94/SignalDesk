@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import settings as settings  # noqa: F401
 from .api import config, runs, watchlist
 from .database import init_database
+from .services.orchestrator import orchestrator
 from .services.secrets import secret_store
 
 
@@ -17,6 +18,7 @@ from .services.secrets import secret_store
 async def lifespan(_app: FastAPI):
     init_database()
     secret_store.load_into_environment()
+    orchestrator.recover_interrupted_runs()
     yield
 
 

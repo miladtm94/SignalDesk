@@ -37,6 +37,9 @@ function formatDate(value: string) {
 function formatTimestamp(value: string) {
   return new Intl.DateTimeFormat("en-AU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
+function formatClock(value: string) {
+  return new Intl.DateTimeFormat("en-AU", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
+}
 function ratingTone(rating?: string | null) {
   if (["Buy", "Overweight"].includes(rating ?? "")) return "positive";
   if (["Sell", "Underweight"].includes(rating ?? "")) return "negative";
@@ -115,14 +118,16 @@ function FormHeading({ step, title, hint }: { step: string; title: string; hint?
 function Stepper({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <label><span>{label}</span><div className="stepper"><button onClick={() => onChange(Math.max(1, value - 1))}>−</button><strong>{value}</strong><button onClick={() => onChange(Math.min(10, value + 1))}>+</button></div></label>; }
 
 function LiveRun({ runId, onBack }: { runId: string; onBack: () => void }) {
-  const [run, setRun] = useState<RunDetail | null>(null), [error, setError] = useState(""), [note, setNote] = useState(""), [tags, setTags] = useState("");
-  const load = () => api.run(runId).then(setRun).catch((e) => setError(e.message));
+  const [run, setRun] = useState<RunDetail | null>(null), [error, setError] = useState(""), [note, setNote] = useState(""), [tags, setTags] = useState(""), [lastActivity, setLastActivity] = useState<string | null>(null);
+  const load = () => api.run(runId).then((value) => { setRun(value); setError(""); const latest = value.events[value.events.length - 1]?.created_at ?? value.started_at; if (latest) setLastActivity((current) => !current || new Date(latest) > new Date(current) ? latest : current); }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [runId]);
+  useEffect(() => { if (!run || !["queued", "running"].includes(run.status)) return; const timer = window.setInterval(load, 15_000); return () => window.clearInterval(timer); }, [runId, run?.status]);
   useEffect(() => {
     if (!run || !["queued", "running"].includes(run.status)) return;
     const socket = new WebSocket(streamUrl(runId));
     socket.onmessage = (message) => {
       const event = JSON.parse(message.data);
+      setLastActivity(event.created_at ?? new Date().toISOString());
       if (event.event_type === "section") setRun((current) => current ? { ...current, sections: mergeSection(current.sections, event.payload) } : current);
       if (["completed", "failed"].includes(event.event_type)) load();
     };
@@ -134,7 +139,7 @@ function LiveRun({ runId, onBack }: { runId: string; onBack: () => void }) {
   const ordered = [...run.sections].sort((a, b) => sectionOrder.indexOf(a.section_key) - sectionOrder.indexOf(b.section_key)), completeCount = new Set(run.sections.map((s) => s.section_key)).size, progress = Math.min(100, Math.round((completeCount / 12) * 100));
   return <><div className="run-topline"><button className="back-button" onClick={onBack}><ArrowLeft size={15} /> Run history</button><div className="run-actions"><button onClick={() => api.star(run.id, !run.starred).then(() => setRun({ ...run, starred: !run.starred }))}><Star size={15} fill={run.starred ? "currentColor" : "none"} /> {run.starred ? "Starred" : "Star"}</button>{run.status === "failed" && <button onClick={() => api.resume(run.id).then(load)}><Play size={14} /> Resume</button>}<a href={`/api/runs/${run.id}/report.md`}><Download size={14} /> Markdown</a></div></div>
     <section className="run-hero"><div><span className="eyebrow">{run.asset_type.toUpperCase()} RESEARCH · {formatDate(run.trade_date)}</span><h1>{run.ticker}</h1><p>{run.quick_think_llm} for evidence gathering · {run.deep_think_llm} for synthesis</p></div><div className="decision-panel"><span>Portfolio rating</span><strong className={ratingTone(run.decision?.rating)}>{run.decision?.rating ?? (run.status === "running" ? "Pending" : "—")}</strong><small>{run.decision?.time_horizon ?? "Final synthesis appears after the risk debate"}</small></div></section>
-    <section className="run-progress"><div className="progress-head"><Status value={run.status} /><span>{completeCount} of 12 research sections captured</span><strong>{run.usage?.tokens_in.toLocaleString() ?? 0} in / {run.usage?.tokens_out.toLocaleString() ?? 0} out</strong><strong>${run.usage?.estimated_cost_usd.toFixed(3) ?? "0.000"} est.</strong></div><div className="progress-track"><span style={{ width: `${run.status === "completed" ? 100 : progress}%` }} /></div></section>
+    <section className="run-progress"><div className="progress-head"><Status value={run.status} /><span>{completeCount} of 12 research sections captured</span>{run.status === "running" && <span className="activity-stamp"><span className="pulse-dot" /> Provider call monitored · {lastActivity ? formatClock(lastActivity) : "starting"}</span>}<strong>{run.usage?.tokens_in.toLocaleString() ?? 0} in / {run.usage?.tokens_out.toLocaleString() ?? 0} out</strong><strong>${run.usage?.estimated_cost_usd.toFixed(3) ?? "0.000"} est.</strong></div><div className="progress-track"><span style={{ width: `${run.status === "completed" ? 100 : progress}%` }} /></div></section>
     {run.error_message && <div className="failure-banner"><AlertCircle size={18} /><div><strong>The run stopped before completion</strong><span>{run.error_message}</span></div></div>}
     <div className="report-layout"><section className="report-flow">{ordered.length ? ordered.map((section, index) => <ReportSection key={section.section_key} section={section} index={index} />) : <div className="waiting-card"><RefreshCw className="spin" /><strong>The analyst desk is gathering evidence</strong><span>Sections will appear here as each agent completes.</span></div>}{run.status === "running" && ordered.length > 0 && <div className="next-section"><span className="pulse-dot" /><span>Waiting for the next completed agent step…</span></div>}</section><aside className="run-aside"><div className="record-card"><span className="eyebrow">REPRODUCIBILITY RECORD</span><dl><div><dt>Provider</dt><dd>{run.llm_provider}</dd></div><div><dt>Deep model</dt><dd>{run.deep_think_llm}</dd></div><div><dt>Quick model</dt><dd>{run.quick_think_llm}</dd></div><div><dt>Temperature</dt><dd>{run.temperature ?? "Default"}</dd></div><div><dt>Debate rounds</dt><dd>{run.max_debate_rounds} + {run.max_risk_discuss_rounds} risk</dd></div><div><dt>Checkpoint</dt><dd>{run.checkpoint_enabled ? "Enabled" : "Disabled"}</dd></div><div><dt>Started</dt><dd>{run.started_at ? formatTimestamp(run.started_at) : "Queued"}</dd></div></dl></div><div className="notes-card"><div className="card-heading"><div><MessageSquarePlus size={16} /><strong>Notebook</strong></div><span>{run.notes.length}</span></div><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="What do you want to remember about this call?" /><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" /><button onClick={saveNote}>Save note</button>{run.notes.map((item) => <article key={item.id}><p>{item.note_text}</p><div>{item.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div><small>{formatTimestamp(item.created_at)}</small></article>)}</div></aside></div></>;
 }

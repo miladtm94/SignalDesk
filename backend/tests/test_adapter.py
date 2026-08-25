@@ -66,7 +66,7 @@ class MockGraph:
 
 
 def test_streaming_adapter_emits_each_completed_section(monkeypatch, tmp_path):
-    monkeypatch.setattr(adapter, "TradingAgentsGraph", MockGraph)
+    monkeypatch.setattr(adapter, "ConsoleTradingAgentsGraph", MockGraph)
     sections = []
     statuses = []
     result = adapter.run_streaming_analysis(
@@ -93,6 +93,14 @@ def test_optional_overrides_do_not_erase_upstream_defaults(tmp_path):
     )
     assert isinstance(config["data_vendors"], dict)
     assert config["data_vendors"]["core_stock_apis"]
+    assert config["llm_timeout"] == adapter.LLM_REQUEST_TIMEOUT_SECONDS
+    assert config["llm_max_retries"] == adapter.LLM_MAX_RETRIES
+
+
+def test_console_graph_forwards_request_timeout():
+    graph = adapter.ConsoleTradingAgentsGraph.__new__(adapter.ConsoleTradingAgentsGraph)
+    graph.config = {"llm_provider": "google", "llm_timeout": 45}
+    assert graph._get_provider_kwargs()["timeout"] == 45
 
 
 def test_google_flash_lite_is_the_console_default():

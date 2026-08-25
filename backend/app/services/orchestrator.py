@@ -17,7 +17,7 @@ from backend.adapters.tradingagents_adapter import SectionEvent, run_streaming_a
 from ..database import SessionLocal
 from ..models import Decision, Run, RunEvent, RunSection, Usage
 from ..schemas import RunCreate
-from ..settings import RESULTS_DIR
+from ..settings import RESULTS_DIR, RUN_HEARTBEAT_SECONDS
 from .costs import actual_usage_cost, estimate_run_cost
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,44 @@ class RunOrchestrator:
         task.add_done_callback(self._tasks.discard)
 
     async def _run(self, run_id: str) -> None:
-        await asyncio.to_thread(self._execute_sync, run_id)
+        worker = asyncio.create_task(asyncio.to_thread(self._execute_sync, run_id))
+        while not worker.done():
+            done, _ = await asyncio.wait({worker}, timeout=RUN_HEARTBEAT_SECONDS)
+            if done:
+                break
+            await self.broadcaster.publish(
+                run_id,
+                {
+                    "sequence": -1,
+                    "event_type": "heartbeat",
+                    "payload": {"status": "running"},
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        await worker
+
+    def recover_interrupted_runs(self) -> int:
+        """Make runs orphaned by a prior backend process safely resumable."""
+        message = (
+            "The backend stopped before this run completed. "
+            "Resume the run to continue from its saved checkpoint."
+        )
+        with SessionLocal.begin() as session:
+            rows = session.scalars(
+                select(Run).where(Run.status.in_({"queued", "running"}))
+            ).all()
+            run_ids = [run.id for run in rows]
+            for run in rows:
+                run.status = "failed"
+                run.error_message = message
+                run.completed_at = datetime.now(timezone.utc)
+        for run_id in run_ids:
+            self._record_and_publish(
+                run_id,
+                "failed",
+                {"status": "failed", "message": message, "resumable": True},
+            )
+        return len(run_ids)
 
     def _execute_sync(self, run_id: str) -> None:
         lock = self._run_locks[run_id]
@@ -154,7 +191,7 @@ class RunOrchestrator:
             )
         except Exception as exc:
             logger.exception("TradingAgents run %s failed", run_id)
-            message = str(exc)[:4000] or type(exc).__name__
+            message = self._failure_message(exc)
             with SessionLocal.begin() as session:
                 run = session.get(Run, run_id)
                 if run:
@@ -164,6 +201,17 @@ class RunOrchestrator:
             self._record_and_publish(run_id, "failed", {"status": "failed", "message": message})
         finally:
             lock.release()
+
+    @staticmethod
+    def _failure_message(exc: Exception) -> str:
+        raw = str(exc) or type(exc).__name__
+        normalized = raw.lower()
+        if "deadline_exceeded" in normalized or "timed out" in normalized or "timeout" in normalized:
+            return (
+                "The model provider timed out before completing this step. "
+                "Your completed sections and checkpoint are intact; use Resume to retry."
+            )
+        return raw[:4000]
 
     def _on_section(self, run_id: str, event: SectionEvent, usage_snapshot: dict[str, int]) -> None:
         with SessionLocal.begin() as session:

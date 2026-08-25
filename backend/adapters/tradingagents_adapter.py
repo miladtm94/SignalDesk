@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult
 from pydantic import BaseModel
 
+from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.checkpointer import clear_checkpoint, get_checkpointer, thread_id
 from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -27,6 +28,17 @@ from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
 from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
 
 logger = logging.getLogger(__name__)
+
+
+class ConsoleTradingAgentsGraph(TradingAgentsGraph):
+    """Apply web-console reliability limits without changing upstream code."""
+
+    def _get_provider_kwargs(self) -> dict[str, Any]:
+        kwargs = super()._get_provider_kwargs()
+        timeout = self.config.get("llm_timeout")
+        if timeout is not None:
+            kwargs["timeout"] = float(timeout)
+        return kwargs
 
 
 @dataclass(frozen=True)
@@ -213,6 +225,8 @@ def _build_config(config_overrides: dict[str, Any], results_dir: Path) -> dict[s
         }
     )
     config["results_dir"] = str(results_dir.parent)
+    config["llm_timeout"] = LLM_REQUEST_TIMEOUT_SECONDS
+    config["llm_max_retries"] = LLM_MAX_RETRIES
     return config
 
 
@@ -233,7 +247,7 @@ def run_streaming_analysis(
     config = _build_config(config_overrides, report_dir)
     stats = StatsCallbackHandler()
     seen: dict[str, tuple[str, dict[str, Any] | None]] = {}
-    graph: TradingAgentsGraph | None = None
+    graph: ConsoleTradingAgentsGraph | None = None
     checkpoint_context = None
 
     def emit_changed(state: dict[str, Any]) -> None:
@@ -244,7 +258,7 @@ def run_streaming_analysis(
                 on_section(event, stats.snapshot())
 
     try:
-        graph = TradingAgentsGraph(
+        graph = ConsoleTradingAgentsGraph(
             selected_analysts=selected_analysts,
             debug=False,
             config=config,
@@ -293,6 +307,15 @@ def run_streaming_analysis(
         report_path = graph.save_reports(final_state, ticker, save_path=report_dir)
         return AdapterResult(final_state, decision, stats.snapshot(), report_path)
     except Exception as streaming_error:
+        # Once real graph output exists, this is an execution/provider failure,
+        # not a streaming-interface incompatibility. Re-running from scratch
+        # would duplicate calls and can hang a second time; let the orchestrator
+        # surface a resumable failure instead.
+        compatibility_error = isinstance(
+            streaming_error, (AttributeError, NotImplementedError, TypeError)
+        )
+        if seen or not compatibility_error:
+            raise
         logger.exception("Streaming adapter failed for run %s; falling back to propagate", run_id)
         on_status(
             "streaming_degraded",
@@ -304,7 +327,7 @@ def run_streaming_analysis(
         if checkpoint_context is not None:
             checkpoint_context.__exit__(None, None, None)
             checkpoint_context = None
-        fallback = TradingAgentsGraph(
+        fallback = ConsoleTradingAgentsGraph(
             selected_analysts=selected_analysts,
             debug=False,
             config=config,

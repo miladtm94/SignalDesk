@@ -32,3 +32,12 @@ FRONTEND_ORIGINS = tuple(
     if value.strip()
 )
 DAILY_SPEND_CAP_USD = float(os.getenv("TRADING_CONSOLE_DAILY_CAP_USD", "0") or 0)
+LLM_REQUEST_TIMEOUT_SECONDS = max(
+    30.0, float(os.getenv("TRADING_CONSOLE_LLM_TIMEOUT_SECONDS", "120") or 120)
+)
+# Google treats 1 as one initial request with no automatic retry. Keeping the
+# console default at one prevents a single slow step from doubling its timeout.
+LLM_MAX_RETRIES = max(1, int(os.getenv("TRADING_CONSOLE_LLM_MAX_RETRIES", "1") or 1))
+RUN_HEARTBEAT_SECONDS = max(
+    5.0, float(os.getenv("TRADING_CONSOLE_HEARTBEAT_SECONDS", "15") or 15)
+)

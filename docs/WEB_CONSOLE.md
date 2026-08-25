@@ -15,18 +15,14 @@ make web-install
 make web-dev
 ```
 
-In a second terminal:
-
-```bash
-cd frontend
-npm run dev
-```
-
-Open `http://127.0.0.1:5174`. The API listens only on
+The single `make web-dev` process starts and supervises both the backend and
+frontend. Press Ctrl+C once to stop both. Open `http://127.0.0.1:5174`. The API listens only on
 `http://127.0.0.1:8765` by default. API keys can be supplied through the
 existing environment variables or saved from Settings; saved values are
 encrypted in the console data directory and only their final four characters
 are returned.
+
+For backend-only development, run `make web-backend`.
 
 For a containerized local deployment:
 

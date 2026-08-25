@@ -1,7 +1,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: venv install test lint web-install web-dev web-test web-build fetch sync push status backtest
+.PHONY: venv install test lint web-install web-dev web-backend web-test web-build fetch sync push status backtest
 
 venv:
 	python3 -m venv $(VENV)
@@ -21,6 +21,9 @@ web-install:
 	cd frontend && npm install
 
 web-dev:
+	$(PYTHON) -m backend.app.dev_all
+
+web-backend:
 	$(PYTHON) -m backend.app.dev
 
 web-test:

@@ -148,6 +148,7 @@ export const api = {
   runs: (query = "") => request<RunSummary[]>(`/api/runs${query ? `?${query}` : ""}`),
   run: (id: string) => request<RunDetail>(`/api/runs/${id}`),
   createRun: (payload: RunPayload) => request<{ run_id: string; status: string; estimated_cost_usd: number }>("/api/runs", { method: "POST", body: JSON.stringify(payload) }),
+  deleteRun: (id: string) => request<void>(`/api/runs/${id}`, { method: "DELETE" }),
   star: (id: string, starred: boolean) => request<RunSummary>(`/api/runs/${id}`, { method: "PATCH", body: JSON.stringify({ starred }) }),
   resume: (id: string) => request<{ run_id: string }>(`/api/runs/${id}/resume`, { method: "POST" }),
   note: (id: string, note_text: string, tags: string[]) => request<RunNote>(`/api/runs/${id}/notes`, { method: "POST", body: JSON.stringify({ note_text, tags, starred: false }) }),

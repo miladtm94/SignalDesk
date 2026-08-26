@@ -135,6 +135,28 @@ class RunDetail(RunSummary):
     events: list[EventOut]
 
 
+class ChartCandleOut(BaseModel):
+    time: str
+    open: float
+    high: float
+    low: float
+    close: float
+
+
+class StrategyLevelOut(BaseModel):
+    kind: Literal["entry", "take_profit", "stop_loss"]
+    price: float
+    source: str
+
+
+class RunChartOut(BaseModel):
+    symbol: str
+    as_of: str
+    current_price: float
+    candles: list[ChartCandleOut]
+    levels: list[StrategyLevelOut]
+
+
 class RunPatch(BaseModel):
     starred: bool
 

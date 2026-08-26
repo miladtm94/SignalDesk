@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections import defaultdict, deque
 from datetime import date, datetime, time as datetime_time, timezone
@@ -18,15 +19,27 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from ...adapters.tradingagents_adapter import load_current_market_chart
 from ..database import SessionLocal
 from ..models import Decision, Run, RunEvent, RunNote, Usage
-from ..schemas import NoteCreate, NoteOut, RunCreate, RunCreated, RunDetail, RunPatch, RunSummary
+from ..schemas import (
+    NoteCreate,
+    NoteOut,
+    RunChartOut,
+    RunCreate,
+    RunCreated,
+    RunDetail,
+    RunPatch,
+    RunSummary,
+)
+from ..services.charts import strategy_levels
 from ..services.costs import estimate_run_cost
 from ..services.orchestrator import orchestrator
 from ..services.providers import get_provider_configuration
 from ..settings import DAILY_SPEND_CAP_USD
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+logger = logging.getLogger(__name__)
 _launches: dict[str, deque[float]] = defaultdict(deque)
 
 
@@ -181,6 +194,31 @@ def get_run(run_id: str) -> dict:
         if run is None:
             raise HTTPException(status_code=404, detail="Run not found")
         return _serialize_run(run, detail=True)
+
+
+@router.get("/{run_id}/chart", response_model=RunChartOut)
+def get_run_chart(run_id: str) -> dict:
+    with SessionLocal() as session:
+        run = session.scalar(_run_query().where(Run.id == run_id))
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        ticker = run.ticker
+        levels = strategy_levels(run.decision, run.sections)
+    try:
+        market = load_current_market_chart(ticker)
+    except Exception as exc:
+        logger.warning("Current chart unavailable for run %s: %s", run_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Current market candles are temporarily unavailable. The saved report is unaffected.",
+        ) from exc
+    return {
+        "symbol": market.symbol,
+        "as_of": market.as_of,
+        "current_price": market.candles[-1]["close"],
+        "candles": market.candles,
+        "levels": levels,
+    }
 
 
 @router.patch("/{run_id}", response_model=RunSummary)

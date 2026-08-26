@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { CandlestickSeries, ColorType, createChart, LineStyle } from "lightweight-charts";
 import {
   Activity, AlertCircle, ArrowLeft, ArrowRight, BarChart3, BookOpen, Bot,
   Check, CheckCircle2, ChevronDown, CircleDollarSign, Download, FileText,
   FlaskConical, History, KeyRound, Menu, MessageSquarePlus, Play, RefreshCw,
   Search, Settings, ShieldCheck, Sparkles, Star, Trash2, X,
 } from "lucide-react";
-import { api, Preferences, ProviderResponse, RunDetail, RunPayload, RunSection, RunSummary, SecretMask, streamUrl } from "./api";
+import { api, Preferences, ProviderResponse, RunChart, RunDetail, RunPayload, RunSection, RunSummary, SecretMask, streamUrl } from "./api";
 
 type View = "dashboard" | "new" | "run" | "compare" | "settings";
 const analystOptions = [
@@ -16,18 +17,18 @@ const analystOptions = [
   ["fundamentals", "Fundamentals", "Financial statements, quality and valuation"],
 ] as const;
 const sectionMeta: Record<string, { label: string; group: string; tone: string }> = {
+  portfolio_manager: { label: "Portfolio manager", group: "Final decision", tone: "lime" },
+  research_manager: { label: "Research manager", group: "Research decision", tone: "teal" },
+  trader: { label: "Trader proposal", group: "Trading plan", tone: "blue" },
+  risk_aggressive: { label: "Aggressive risk", group: "Risk debate", tone: "red" },
+  risk_conservative: { label: "Conservative risk", group: "Risk debate", tone: "amber" },
+  risk_neutral: { label: "Neutral risk", group: "Risk debate", tone: "violet" },
   market_report: { label: "Market analyst", group: "Analyst desk", tone: "teal" },
   sentiment_report: { label: "Sentiment analyst", group: "Analyst desk", tone: "violet" },
   news_report: { label: "News & macro analyst", group: "Analyst desk", tone: "blue" },
   fundamentals_report: { label: "Fundamentals analyst", group: "Analyst desk", tone: "amber" },
   bull: { label: "Bull researcher", group: "Research debate", tone: "lime" },
   bear: { label: "Bear researcher", group: "Research debate", tone: "red" },
-  research_manager: { label: "Research manager", group: "Research decision", tone: "teal" },
-  trader: { label: "Trader proposal", group: "Trading plan", tone: "blue" },
-  risk_aggressive: { label: "Aggressive risk", group: "Risk debate", tone: "red" },
-  risk_conservative: { label: "Conservative risk", group: "Risk debate", tone: "amber" },
-  risk_neutral: { label: "Neutral risk", group: "Risk debate", tone: "violet" },
-  portfolio_manager: { label: "Portfolio manager", group: "Final decision", tone: "lime" },
 };
 const sectionOrder = Object.keys(sectionMeta);
 
@@ -113,13 +114,13 @@ function NewAnalysis({ onLaunched, onSettings }: { onLaunched: (id: string) => v
     <div className="divider" /><FormHeading step="02" title="Build the analyst desk" hint={`${form.selected_analysts.length} selected`} /><div className="analyst-grid">{analystOptions.map(([key, label, copy]) => { const selected = form.selected_analysts.includes(key); return <label className={`analyst-card ${selected ? "selected" : ""}`} key={key}><input type="checkbox" checked={selected} onChange={() => toggleAnalyst(key)} /><span className="check">{selected && "✓"}</span><strong>{label}</strong><small>{copy}</small></label>; })}</div>
     <div className="divider" /><FormHeading step="03" title="Reasoning setup" />{config?.providers.length ? <><div className="config-row"><label><span>Provider</span><select value={form.llm_provider} onChange={(e) => updateProvider(e.target.value)}>{config.providers.map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}</select></label><label><span>Quick model</span><select value={form.quick_think_llm} onChange={(e) => setForm({ ...form, quick_think_llm: e.target.value })}>{provider?.quick_models.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label><label><span>Deep model</span><select value={form.deep_think_llm} onChange={(e) => setForm({ ...form, deep_think_llm: e.target.value })}>{provider?.deep_models.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label></div>{(form.quick_think_llm === "custom" || form.deep_think_llm === "custom") && <div className="custom-models">{form.quick_think_llm === "custom" && <label><span>Quick model ID</span><input value={quickCustom} onChange={(e) => setQuickCustom(e.target.value)} placeholder="Exact provider model ID" /></label>}{form.deep_think_llm === "custom" && <label><span>Deep model ID</span><input value={deepCustom} onChange={(e) => setDeepCustom(e.target.value)} placeholder="Exact provider model ID" /></label>}</div>}</> : <div className="connect-provider"><KeyRound size={18} /><div><strong>No model provider is ready</strong><span>Add a server-side key or connect Ollama in settings.</span></div><button onClick={onSettings}>Open settings</button></div>}
     <button className="advanced" onClick={() => setAdvanced(!advanced)}>Advanced configuration <ChevronDown className={advanced ? "rotated" : ""} size={16} /></button>{advanced && <div className="advanced-grid"><Stepper label="Research debate rounds" value={form.max_debate_rounds} onChange={(value) => setForm({ ...form, max_debate_rounds: value })} /><Stepper label="Risk debate rounds" value={form.max_risk_discuss_rounds} onChange={(value) => setForm({ ...form, max_risk_discuss_rounds: value })} /><label><span>Temperature</span><input type="number" min="0" max="2" step="0.1" value={form.temperature ?? ""} placeholder="Provider default" onChange={(e) => setForm({ ...form, temperature: e.target.value === "" ? null : Number(e.target.value) })} /></label><label><span>Output language</span><input value={form.output_language} onChange={(e) => setForm({ ...form, output_language: e.target.value })} /></label><label className="checkpoint-toggle"><input type="checkbox" checked={form.checkpoint_enabled} onChange={(e) => setForm({ ...form, checkpoint_enabled: e.target.checked })} /><span><strong>Checkpoint run</strong><small>Resume after provider failures</small></span></label></div>}
-  </div><aside className="estimate-card"><div className="estimate-icon"><CircleDollarSign size={22} /></div><span className="eyebrow">ROUGH RUN ESTIMATE</span><div className="estimate-price"><sup>$</sup>{estimate.toFixed(2)}</div><p>Planning guardrail based on typical input/output sizes. Tool use and provider billing can differ.</p><dl><div><dt>Analyst passes</dt><dd>{form.selected_analysts.length}</dd></div><div><dt>Research debate</dt><dd>{form.max_debate_rounds} round{form.max_debate_rounds !== 1 && "s"}</dd></div><div><dt>Risk viewpoints</dt><dd>{form.max_risk_discuss_rounds * 3}</dd></div><div><dt>Checkpointing</dt><dd className="positive">{form.checkpoint_enabled ? "On" : "Off"}</dd></div></dl>{error && <p className="form-error"><AlertCircle size={13} /> {error}</p>}<button className="launch-button" disabled={launching || !provider || !form.selected_analysts.length || !form.ticker || (form.quick_think_llm === "custom" && !quickCustom.trim()) || (form.deep_think_llm === "custom" && !deepCustom.trim())} onClick={launch}>{launching ? <RefreshCw className="spin" size={17} /> : <Sparkles size={17} />} {launching ? "Starting analysis…" : "Run Analysis"} <ArrowRight size={17} /></button><small>Runs may take several minutes and call paid APIs.</small></aside></section></>;
+  </div><aside className="estimate-card"><div className="estimate-icon"><CircleDollarSign size={22} /></div><span className="eyebrow">ROUGH RUN ESTIMATE</span><div className="estimate-price"><sup>$</sup>{estimate.toFixed(2)}</div><p>Planning guardrail based on typical input/output sizes. Tool use and provider billing can differ.</p><dl><div><dt>Analyst passes</dt><dd>{form.selected_analysts.length}</dd></div><div><dt>Research debate</dt><dd>{form.max_debate_rounds} round{form.max_debate_rounds !== 1 && "s"}</dd></div><div><dt>Risk viewpoints</dt><dd>{form.max_risk_discuss_rounds * 3}</dd></div><div><dt>Checkpointing</dt><dd className="positive">{form.checkpoint_enabled ? "On" : "Off"}</dd></div></dl>{error && <p className="form-error"><AlertCircle size={13} /> {error}</p>}<button className="launch-button" disabled={launching || !provider || !form.selected_analysts.length || !form.ticker || (form.quick_think_llm === "custom" && !quickCustom.trim()) || (form.deep_think_llm === "custom" && !deepCustom.trim())} onClick={launch}>{launching ? <RefreshCw className="spin" size={17} /> : <Sparkles size={17} />} {launching ? "Starting analysis…" : "Run Analysis"}</button><small>Runs may take several minutes and call paid APIs.</small></aside></section></>;
 }
 function FormHeading({ step, title, hint }: { step: string; title: string; hint?: string }) { return <div className="section-heading"><div><span className="step">{step}</span><h2>{title}</h2></div>{hint && <span className="hint">{hint}</span>}</div>; }
 function Stepper({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <label><span>{label}</span><div className="stepper"><button onClick={() => onChange(Math.max(1, value - 1))}>−</button><strong>{value}</strong><button onClick={() => onChange(Math.min(10, value + 1))}>+</button></div></label>; }
 
 function LiveRun({ runId, onBack }: { runId: string; onBack: () => void }) {
-  const [run, setRun] = useState<RunDetail | null>(null), [error, setError] = useState(""), [note, setNote] = useState(""), [tags, setTags] = useState(""), [lastActivity, setLastActivity] = useState<string | null>(null);
+  const [run, setRun] = useState<RunDetail | null>(null), [error, setError] = useState(""), [note, setNote] = useState(""), [tags, setTags] = useState(""), [lastActivity, setLastActivity] = useState<string | null>(null), [activeSectionKey, setActiveSectionKey] = useState<string | null>(null);
   const load = () => api.run(runId).then((value) => { setRun(value); setError(""); const latest = value.events[value.events.length - 1]?.created_at ?? value.started_at; if (latest) setLastActivity((current) => !current || new Date(latest) > new Date(current) ? latest : current); }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [runId]);
   useEffect(() => { if (!run || !["queued", "running"].includes(run.status)) return; const timer = window.setInterval(load, 15_000); return () => window.clearInterval(timer); }, [runId, run?.status]);
@@ -134,15 +135,61 @@ function LiveRun({ runId, onBack }: { runId: string; onBack: () => void }) {
     };
     return () => socket.close(1000, "Run view updated");
   }, [runId, run?.status]);
+  const ordered = useMemo(() => [...(run?.sections ?? [])].sort((a, b) => sectionOrder.indexOf(a.section_key) - sectionOrder.indexOf(b.section_key)), [run?.sections]);
+  const availableSectionKeys = ordered.map((section) => section.section_key).join(":");
+  useEffect(() => {
+    if (!ordered.length) setActiveSectionKey(null);
+    else if (!activeSectionKey || !ordered.some((section) => section.section_key === activeSectionKey)) setActiveSectionKey(ordered[0].section_key);
+  }, [runId, availableSectionKeys, activeSectionKey]);
   const saveNote = async () => { if (!note.trim()) return; const saved = await api.note(runId, note, tags.split(",").map((tag) => tag.trim()).filter(Boolean)); setRun((current) => current ? { ...current, notes: [saved, ...current.notes] } : current); setNote(""); setTags(""); };
   if (error) return <EmptyState title="Run unavailable" copy={error} action="Back to history" onAction={onBack} />;
   if (!run) return <div className="loading-page"><RefreshCw className="spin" /><span>Opening research record…</span></div>;
-  const ordered = [...run.sections].sort((a, b) => sectionOrder.indexOf(a.section_key) - sectionOrder.indexOf(b.section_key)), completeCount = new Set(run.sections.map((s) => s.section_key)).size, progress = Math.min(100, Math.round((completeCount / 12) * 100));
+  const activeSection = ordered.find((section) => section.section_key === activeSectionKey) ?? ordered[0], completeCount = new Set(run.sections.map((s) => s.section_key)).size, progress = Math.min(100, Math.round((completeCount / 12) * 100));
+  const strategyRevision = run.sections.filter((section) => ["portfolio_manager", "research_manager", "trader"].includes(section.section_key)).map((section) => section.updated_at).join(":");
   return <><div className="run-topline"><button className="back-button" onClick={onBack}><ArrowLeft size={15} /> Run history</button><div className="run-actions"><button onClick={() => api.star(run.id, !run.starred).then(() => setRun({ ...run, starred: !run.starred }))}><Star size={15} fill={run.starred ? "currentColor" : "none"} /> {run.starred ? "Starred" : "Star"}</button>{run.status === "failed" && <button onClick={() => api.resume(run.id).then(load)}><Play size={14} /> Resume</button>}<a href={`/api/runs/${run.id}/report.md`}><Download size={14} /> Markdown</a></div></div>
     <section className="run-hero"><div><span className="eyebrow">{run.asset_type.toUpperCase()} RESEARCH · {formatDate(run.trade_date)}</span><h1>{run.ticker}</h1><p>{run.quick_think_llm} for evidence gathering · {run.deep_think_llm} for synthesis</p></div><div className="decision-panel"><span>Portfolio rating</span><strong className={ratingTone(run.decision?.rating)}>{run.decision?.rating ?? (run.status === "running" ? "Pending" : "—")}</strong><small>{run.decision?.time_horizon ?? "Final synthesis appears after the risk debate"}</small></div></section>
     <section className="run-progress"><div className="progress-head"><Status value={run.status} /><span>{completeCount} of 12 research sections captured</span>{run.status === "running" && <span className="activity-stamp"><span className="pulse-dot" /> Provider call monitored · {lastActivity ? formatClock(lastActivity) : "starting"}</span>}<strong>{run.usage?.tokens_in.toLocaleString() ?? 0} in / {run.usage?.tokens_out.toLocaleString() ?? 0} out</strong><strong>${run.usage?.estimated_cost_usd.toFixed(3) ?? "0.000"} est.</strong></div><div className="progress-track"><span style={{ width: `${run.status === "completed" ? 100 : progress}%` }} /></div></section>
     {run.error_message && <div className="failure-banner"><AlertCircle size={18} /><div><strong>The run stopped before completion</strong><span>{run.error_message}</span></div></div>}
-    <div className="report-layout"><section className="report-flow">{ordered.length ? ordered.map((section, index) => <ReportSection key={section.section_key} section={section} index={index} />) : <div className="waiting-card"><RefreshCw className="spin" /><strong>The analyst desk is gathering evidence</strong><span>Sections will appear here as each agent completes.</span></div>}{run.status === "running" && ordered.length > 0 && <div className="next-section"><span className="pulse-dot" /><span>Waiting for the next completed agent step…</span></div>}</section><aside className="run-aside"><div className="record-card"><span className="eyebrow">REPRODUCIBILITY RECORD</span><dl><div><dt>Provider</dt><dd>{run.llm_provider}</dd></div><div><dt>Deep model</dt><dd>{run.deep_think_llm}</dd></div><div><dt>Quick model</dt><dd>{run.quick_think_llm}</dd></div><div><dt>Temperature</dt><dd>{run.temperature ?? "Default"}</dd></div><div><dt>Debate rounds</dt><dd>{run.max_debate_rounds} + {run.max_risk_discuss_rounds} risk</dd></div><div><dt>Checkpoint</dt><dd>{run.checkpoint_enabled ? "Enabled" : "Disabled"}</dd></div><div><dt>Started</dt><dd>{run.started_at ? formatTimestamp(run.started_at) : "Queued"}</dd></div></dl></div><div className="notes-card"><div className="card-heading"><div><MessageSquarePlus size={16} /><strong>Notebook</strong></div><span>{run.notes.length}</span></div><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="What do you want to remember about this call?" /><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" /><button onClick={saveNote}>Save note</button>{run.notes.map((item) => <article key={item.id}><p>{item.note_text}</p><div>{item.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div><small>{formatTimestamp(item.created_at)}</small></article>)}</div></aside></div></>;
+    <StrategyChart runId={run.id} revision={strategyRevision} />
+    <div className="report-layout"><section className="report-flow">{ordered.length ? <><div className="section-tabs" role="tablist" aria-label="Research report sections">{ordered.map((section, index) => { const meta = sectionMeta[section.section_key] ?? { label: section.section_key, group: "Research", tone: "teal" }; const selected = section.section_key === activeSection?.section_key; return <button key={section.section_key} className={`section-tab ${selected ? "active" : ""}`} role="tab" aria-selected={selected} onClick={() => setActiveSectionKey(section.section_key)}><span>{String(index + 1).padStart(2, "0")} · {meta.group}</span><strong>{meta.label}</strong></button>; })}</div>{activeSection && <ReportSection section={activeSection} index={ordered.indexOf(activeSection)} />}</> : <div className="waiting-card"><RefreshCw className="spin" /><strong>The analyst desk is gathering evidence</strong><span>Sections will appear here as each agent completes.</span></div>}{run.status === "running" && ordered.length > 0 && <div className="next-section"><span className="pulse-dot" /><span>Waiting for the next completed agent step…</span></div>}</section><aside className="run-aside"><div className="record-card"><span className="eyebrow">REPRODUCIBILITY RECORD</span><dl><div><dt>Provider</dt><dd>{run.llm_provider}</dd></div><div><dt>Deep model</dt><dd>{run.deep_think_llm}</dd></div><div><dt>Quick model</dt><dd>{run.quick_think_llm}</dd></div><div><dt>Temperature</dt><dd>{run.temperature ?? "Default"}</dd></div><div><dt>Debate rounds</dt><dd>{run.max_debate_rounds} + {run.max_risk_discuss_rounds} risk</dd></div><div><dt>Checkpoint</dt><dd>{run.checkpoint_enabled ? "Enabled" : "Disabled"}</dd></div><div><dt>Started</dt><dd>{run.started_at ? formatTimestamp(run.started_at) : "Queued"}</dd></div></dl></div><div className="notes-card"><div className="card-heading"><div><MessageSquarePlus size={16} /><strong>Notebook</strong></div><span>{run.notes.length}</span></div><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="What do you want to remember about this call?" /><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" /><button onClick={saveNote}>Save note</button>{run.notes.map((item) => <article key={item.id}><p>{item.note_text}</p><div>{item.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div><small>{formatTimestamp(item.created_at)}</small></article>)}</div></aside></div></>;
+}
+
+const levelPresentation = {
+  entry: { label: "Entry", color: "#2d8b68" },
+  take_profit: { label: "Take profit", color: "#3b72c4" },
+  stop_loss: { label: "Stop loss", color: "#c4574e" },
+} as const;
+
+function StrategyChart({ runId, revision }: { runId: string; revision: string }) {
+  const container = useRef<HTMLDivElement | null>(null);
+  const [data, setData] = useState<RunChart | null>(null), [error, setError] = useState(""), [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.chart(runId).then((result) => { if (!cancelled) { setData(result); setError(""); } }).catch((reason) => { if (!cancelled) { setData(null); setError(reason instanceof Error ? reason.message : "Chart unavailable"); } }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [runId, revision]);
+  useEffect(() => {
+    if (!container.current || !data?.candles.length) return;
+    const element = container.current;
+    const chart = createChart(element, {
+      width: element.clientWidth,
+      height: 370,
+      layout: { background: { type: ColorType.Solid, color: "#faf9f4" }, textColor: "#61706b" },
+      grid: { vertLines: { color: "#eef0ea" }, horzLines: { color: "#e6e9e2" } },
+      rightPriceScale: { borderColor: "#d8ddd5" },
+      timeScale: { borderColor: "#d8ddd5", timeVisible: false, rightOffset: 4 },
+      crosshair: { vertLine: { color: "#91a39c" }, horzLine: { color: "#91a39c" } },
+    });
+    const series = chart.addSeries(CandlestickSeries, { upColor: "#4e9871", downColor: "#c96b62", borderVisible: false, wickUpColor: "#4e9871", wickDownColor: "#c96b62" });
+    series.setData(data.candles);
+    data.levels.forEach((level) => { const presentation = levelPresentation[level.kind]; series.createPriceLine({ price: level.price, color: presentation.color, lineWidth: 2, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: presentation.label }); });
+    chart.timeScale().fitContent();
+    const resize = new ResizeObserver(() => chart.applyOptions({ width: element.clientWidth }));
+    resize.observe(element);
+    return () => { resize.disconnect(); chart.remove(); };
+  }, [data]);
+  return <section className="strategy-chart-card"><div className="strategy-chart-heading"><div><span className="eyebrow">STRATEGY VISUAL</span><h2>Current price chart & analysis levels</h2><p>{data ? `${data.symbol} · Daily candles through ${formatDate(data.as_of)} · Last close ${data.current_price.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : "Current daily candles with levels stated in the saved analysis."}</p></div><span className="chart-source">TradingView Lightweight Charts · Yahoo Finance data</span></div>{loading ? <div className="chart-state"><RefreshCw className="spin" /> Loading current candles…</div> : error ? <div className="chart-state chart-error"><AlertCircle size={17} /> {error}</div> : <><div ref={container} className="strategy-chart" />{data && <div className="strategy-legend">{data.levels.map((level) => <div key={level.kind}><i style={{ background: levelPresentation[level.kind].color }} /><span>{levelPresentation[level.kind].label}</span><strong>{level.price.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong><small>{level.source}</small></div>)}{!data.levels.length && <p>No entry, take-profit, or stop-loss price was explicitly stated in this analysis.</p>}</div>}</>}</section>;
 }
 function mergeSection(sections: RunSection[], payload: Record<string, unknown>) { const section_key = String(payload.section_key), next: RunSection = { section_key, content_md: String(payload.content_md ?? ""), structured_json: (payload.structured_json as Record<string, unknown> | null) ?? null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; return sections.some((item) => item.section_key === section_key) ? sections.map((item) => item.section_key === section_key ? next : item) : [...sections, next]; }
 function ReportSection({ section, index }: { section: RunSection; index: number }) { const meta = sectionMeta[section.section_key] ?? { label: section.section_key, group: "Research", tone: "teal" }; return <article className={`report-section tone-${meta.tone}`}><div className="report-index">{String(index + 1).padStart(2, "0")}</div><div className="report-body"><div className="report-heading"><div><span>{meta.group}</span><h2>{meta.label}</h2></div><CheckCircle2 size={18} /></div><div className="markdown"><ReactMarkdown>{section.content_md}</ReactMarkdown></div></div></article>; }

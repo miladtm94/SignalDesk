@@ -95,6 +95,28 @@ export type RunDetail = RunSummary & {
   events: RunEvent[];
 };
 
+export type ChartCandle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+export type StrategyLevel = {
+  kind: "entry" | "take_profit" | "stop_loss";
+  price: number;
+  source: string;
+};
+
+export type RunChart = {
+  symbol: string;
+  as_of: string;
+  current_price: number;
+  candles: ChartCandle[];
+  levels: StrategyLevel[];
+};
+
 export type SecretMask = { name: string; configured: boolean; masked_value: string | null };
 export type Preferences = {
   selected_analysts: string[];
@@ -147,6 +169,7 @@ export const api = {
   deleteSecret: (name: string) => request<void>(`/api/config/secrets/${name}`, { method: "DELETE" }),
   runs: (query = "") => request<RunSummary[]>(`/api/runs${query ? `?${query}` : ""}`),
   run: (id: string) => request<RunDetail>(`/api/runs/${id}`),
+  chart: (id: string) => request<RunChart>(`/api/runs/${id}/chart`),
   createRun: (payload: RunPayload) => request<{ run_id: string; status: string; estimated_cost_usd: number }>("/api/runs", { method: "POST", body: JSON.stringify(payload) }),
   deleteRun: (id: string) => request<void>(`/api/runs/${id}`, { method: "DELETE" }),
   star: (id: string, starred: boolean) => request<RunSummary>(`/api/runs/${id}`, { method: "PATCH", body: JSON.stringify({ starred }) }),

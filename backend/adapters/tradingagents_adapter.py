@@ -12,6 +12,7 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from langchain_core.outputs import LLMResult
 from pydantic import BaseModel
 
 from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS
+from tradingagents.dataflows.stockstats_utils import load_ohlcv
+from tradingagents.dataflows.symbol_utils import normalize_symbol
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.checkpointer import clear_checkpoint, get_checkpointer, thread_id
 from tradingagents.graph.trading_graph import TradingAgentsGraph
@@ -55,6 +58,32 @@ class AdapterResult:
     usage: dict[str, int]
     report_path: Path
     degraded_streaming: bool = False
+
+
+@dataclass(frozen=True)
+class MarketChartData:
+    symbol: str
+    as_of: str
+    candles: list[dict[str, str | float]]
+
+
+def load_current_market_chart(symbol: str, limit: int = 180) -> MarketChartData:
+    """Load current daily OHLC candles through the upstream market-data path."""
+    canonical = normalize_symbol(symbol)
+    frame = load_ohlcv(symbol, date.today().isoformat()).tail(limit)
+    candles = [
+        {
+            "time": row.Date.strftime("%Y-%m-%d"),
+            "open": float(row.Open),
+            "high": float(row.High),
+            "low": float(row.Low),
+            "close": float(row.Close),
+        }
+        for row in frame.itertuples()
+    ]
+    if not candles:
+        raise RuntimeError(f"No current market candles are available for {symbol}")
+    return MarketChartData(symbol=canonical, as_of=str(candles[-1]["time"]), candles=candles)
 
 
 class StatsCallbackHandler(BaseCallbackHandler):

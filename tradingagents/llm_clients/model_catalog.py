@@ -81,37 +81,50 @@ _MINIMAX_MODELS: dict[str, list[ModelOption]] = {
 MODEL_OPTIONS: ProviderModeOptions = {
     "openai": {
         "quick": [
+            ("GPT-5.6 Luna - Fastest, cost-sensitive workloads", "gpt-5.6-luna"),
+            ("GPT-5.6 Terra - Balanced intelligence and cost", "gpt-5.6-terra"),
             ("GPT-5.4 Mini - Fast, strong coding and tool use", "gpt-5.4-mini"),
             ("GPT-5.4 Nano - Cheapest, high-volume tasks", "gpt-5.4-nano"),
-            ("GPT-5.5 - Latest frontier, 1M context", "gpt-5.5"),
+            ("Custom model ID", "custom"),
         ],
         "deep": [
-            ("GPT-5.5 - Latest frontier, 1M context", "gpt-5.5"),
+            ("GPT-5.6 Sol - Latest frontier for complex reasoning", "gpt-5.6-sol"),
+            ("GPT-5.6 Terra - Balanced frontier reasoning", "gpt-5.6-terra"),
+            ("GPT-5.6 Luna - Cost-efficient reasoning", "gpt-5.6-luna"),
+            ("GPT-5.5 - Previous frontier, 1M context", "gpt-5.5"),
             ("GPT-5.4 - Previous-gen frontier, 1M context, cost-effective", "gpt-5.4"),
-            ("GPT-5.2 - Strong reasoning, cost-effective", "gpt-5.2"),
-            ("GPT-5.5 Pro - Most capable, expensive ($30/$180 per 1M tokens)", "gpt-5.5-pro"),
+            ("Custom model ID", "custom"),
         ],
     },
     "anthropic": {
         "quick": [
             ("Claude Sonnet 5 - Best speed and intelligence balance", "claude-sonnet-5"),
             ("Claude Haiku 4.5 - Fastest with near-frontier intelligence", "claude-haiku-4-5"),
+            ("Custom model ID", "custom"),
         ],
         "deep": [
             ("Claude Fable 5 - Most capable, long-running agents", "claude-fable-5"),
             ("Claude Opus 4.8 - Frontier agentic coding and reasoning", "claude-opus-4-8"),
             ("Claude Sonnet 5 - Near-frontier intelligence at Sonnet cost", "claude-sonnet-5"),
             ("Claude Opus 4.7 - Previous frontier, long-running agents", "claude-opus-4-7"),
+            ("Custom model ID", "custom"),
         ],
     },
     "google": {
         "quick": [
-            ("Gemini 3.5 Flash - Latest, frontier agentic + coding (GA)", "gemini-3.5-flash"),
-            ("Gemini 3.1 Flash Lite - Most cost-efficient", "gemini-3.1-flash-lite"),
+            ("Gemini 3.7 Flash - Latest, frontier agentic + coding (GA)", "gemini-3.7-flash"),
+            ("Gemini 3.6 Flash - Previous stable Flash", "gemini-3.6-flash"),
+            ("Gemini 3.5 Flash - Stable agentic and coding model", "gemini-3.5-flash"),
+            ("Gemini 3.5 Flash Lite - Most cost-efficient", "gemini-3.5-flash-lite"),
+            ("Gemini 3.1 Flash Lite - Stable low-cost alternative", "gemini-3.1-flash-lite"),
+            ("Custom model ID", "custom"),
         ],
         "deep": [
             ("Gemini 3.1 Pro - Reasoning-first, complex workflows (preview)", "gemini-3.1-pro-preview"),
-            ("Gemini 3.5 Flash - Latest GA, strong agentic + coding", "gemini-3.5-flash"),
+            ("Gemini 3.7 Flash - Latest GA, strong agentic + coding", "gemini-3.7-flash"),
+            ("Gemini 3.6 Flash - Previous stable reasoning model", "gemini-3.6-flash"),
+            ("Gemini 3.5 Flash - Stable reasoning model", "gemini-3.5-flash"),
+            ("Custom model ID", "custom"),
         ],
     },
     "xai": {
@@ -119,11 +132,13 @@ MODEL_OPTIONS: ProviderModeOptions = {
             ("Grok 4.3 - Latest flagship, fast with built-in reasoning", "grok-4.3"),
             ("Grok 4.20 (Non-Reasoning) - Speed-optimized", "grok-4.20-0309-non-reasoning"),
             ("Grok Build 0.1 - Coding-specialized, 256K ctx", "grok-build-0.1"),
+            ("Custom model ID", "custom"),
         ],
         "deep": [
             ("Grok 4.3 - Latest flagship, built-in reasoning, 1M ctx", "grok-4.3"),
             ("Grok 4.20 (Reasoning) - Previous-gen reasoning", "grok-4.20-0309-reasoning"),
             ("Grok 4.20 Multi-Agent - Multi-agent reasoning", "grok-4.20-multi-agent-0309"),
+            ("Custom model ID", "custom"),
         ],
     },
     # DeepSeek: the deepseek-chat / deepseek-reasoner aliases are deprecated
@@ -207,4 +222,59 @@ def get_known_models() -> dict[str, list[str]]:
             }
         )
         for provider, mode_options in MODEL_OPTIONS.items()
+    }
+
+
+REASONING_CONTROLS: dict[str, dict[str, str | list[str] | None]] = {
+    "openai": {
+        "config_key": "openai_reasoning_effort",
+        "env_var": "TRADINGAGENTS_OPENAI_REASONING_EFFORT",
+        "label": "Reasoning effort",
+        "levels": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "medium",
+    },
+    "google": {
+        "config_key": "google_thinking_level",
+        "env_var": "TRADINGAGENTS_GOOGLE_THINKING_LEVEL",
+        "label": "Thinking level",
+        "levels": ["minimal", "low", "medium", "high"],
+        "default": "medium",
+    },
+    "anthropic": {
+        "config_key": "anthropic_effort",
+        "env_var": "TRADINGAGENTS_ANTHROPIC_EFFORT",
+        "label": "Reasoning effort",
+        "levels": ["low", "medium", "high", "xhigh", "max"],
+        "default": "high",
+    },
+}
+
+
+def get_reasoning_control(provider: str, model: str) -> dict[str, object] | None:
+    """Return model-aware reasoning metadata for web/CLI configuration UIs."""
+    provider = provider.lower()
+    control = REASONING_CONTROLS.get(provider)
+    if control is None:
+        return None
+    levels = list(control["levels"])
+    model = model.lower()
+    if provider == "google" and model != "custom" and ("3.7-flash" in model or "pro" in model):
+        levels = [level for level in levels if level != "minimal"]
+    elif provider == "openai" and model != "custom" and not model.startswith("gpt-5.6"):
+        levels = [level for level in levels if level != "max"]
+    elif provider == "anthropic" and model != "custom" and not any(
+        family in model for family in ("claude-sonnet-5", "claude-fable-5", "claude-opus-5")
+    ):
+        levels = [level for level in levels if level not in {"xhigh", "max"}]
+    default = control["default"]
+    if provider == "google" and "flash-lite" in model:
+        default = "minimal"
+    elif provider == "google" and "pro" in model:
+        default = "high"
+    return {
+        "config_key": control["config_key"],
+        "env_var": control["env_var"],
+        "label": control["label"],
+        "levels": levels,
+        "default": default if default in levels else levels[0],
     }

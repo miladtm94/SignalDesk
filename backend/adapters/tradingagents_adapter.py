@@ -28,7 +28,7 @@ from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.checkpointer import clear_checkpoint, get_checkpointer, thread_id
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
-from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
+from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS, get_reasoning_control
 
 logger = logging.getLogger(__name__)
 
@@ -152,10 +152,22 @@ def upstream_catalog() -> dict[str, Any]:
             if flash_lite and flash_lite not in deep_options:
                 deep_options.insert(0, flash_lite)
             google_flash_lite = flash_lite[1] if flash_lite else quick_options[0][1]
+        def model_option(option: tuple[str, str], provider_name: str = provider) -> dict[str, Any]:
+            label, value = option
+            reasoning = get_reasoning_control(provider_name, value)
+            return {
+                "label": label,
+                "value": value,
+                "reasoning_levels": reasoning["levels"] if reasoning else [],
+                "default_reasoning_level": reasoning["default"] if reasoning else None,
+            }
+
+        provider_reasoning = get_reasoning_control(provider, "custom")
         providers[provider] = {
             "key_env": PROVIDER_API_KEY_ENV.get(provider),
-            "quick": [{"label": label, "value": value} for label, value in quick_options],
-            "deep": [{"label": label, "value": value} for label, value in deep_options],
+            "quick": [model_option(option) for option in quick_options],
+            "deep": [model_option(option) for option in deep_options],
+            "reasoning": provider_reasoning,
         }
     return {
         "providers": providers,
@@ -168,6 +180,9 @@ def upstream_catalog() -> dict[str, Any]:
             "max_risk_discuss_rounds": DEFAULT_CONFIG["max_risk_discuss_rounds"],
             "checkpoint_enabled": True,
             "output_language": DEFAULT_CONFIG["output_language"],
+            "google_thinking_level": DEFAULT_CONFIG.get("google_thinking_level"),
+            "openai_reasoning_effort": DEFAULT_CONFIG.get("openai_reasoning_effort"),
+            "anthropic_effort": DEFAULT_CONFIG.get("anthropic_effort"),
         },
         "vendors": copy.deepcopy(DEFAULT_CONFIG.get("data_vendors", {})),
     }
@@ -243,6 +258,9 @@ def _build_config(config_overrides: dict[str, Any], results_dir: Path) -> dict[s
         "output_language",
         "benchmark_ticker",
         "data_vendors",
+        "google_thinking_level",
+        "openai_reasoning_effort",
+        "anthropic_effort",
     }
     # Optional request fields arrive as None when omitted. Never replace a
     # populated upstream default (notably data_vendors) with that sentinel.

@@ -26,6 +26,9 @@ class RunCreate(BaseModel):
     output_language: str = Field(default="English", min_length=2, max_length=40)
     benchmark_ticker: str | None = Field(default=None, max_length=32)
     data_vendors: dict[str, str] | None = None
+    google_thinking_level: Literal["minimal", "low", "medium", "high"] | None = None
+    openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] | None = None
+    anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
 
     @field_validator("ticker")
     @classmethod
@@ -212,6 +215,10 @@ class PreferencesWrite(BaseModel):
     max_risk_discuss_rounds: int = Field(default=1, ge=1, le=10)
     checkpoint_enabled: bool = True
     output_language: str = Field(default="English", min_length=2, max_length=40)
+    google_thinking_level: Literal["minimal", "low", "medium", "high"] | None = None
+    openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] | None = None
+    anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    custom_models: dict[str, list[str]] = Field(default_factory=dict)
 
     @field_validator("selected_analysts")
     @classmethod
@@ -220,3 +227,15 @@ class PreferencesWrite(BaseModel):
         if set(unique) - ANALYST_KEYS:
             raise ValueError("Preferences include an unknown analyst")
         return unique
+
+    @field_validator("custom_models")
+    @classmethod
+    def clean_custom_models(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        cleaned: dict[str, list[str]] = {}
+        for provider, models in value.items():
+            provider_id = provider.strip().lower()
+            if not provider_id:
+                continue
+            valid = [model.strip() for model in models if model.strip() and not any(char.isspace() for char in model.strip())]
+            cleaned[provider_id] = list(dict.fromkeys(valid))[:50]
+        return cleaned

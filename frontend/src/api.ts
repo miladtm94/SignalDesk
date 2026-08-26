@@ -1,9 +1,24 @@
-export type ModelOption = { label: string; value: string };
+export type ModelOption = {
+  label: string;
+  value: string;
+  reasoning_levels: string[];
+  default_reasoning_level: string | null;
+};
+export type ReasoningControl = {
+  config_key: "google_thinking_level" | "openai_reasoning_effort" | "anthropic_effort";
+  env_var: string;
+  label: string;
+  levels: string[];
+  default: string | null;
+};
 export type Provider = {
   id: string;
   availability: string;
+  configured: boolean;
+  key_env: string | null;
   quick_models: ModelOption[];
   deep_models: ModelOption[];
+  reasoning: ReasoningControl | null;
   masked_key: string | null;
 };
 
@@ -18,6 +33,9 @@ export type ProviderResponse = {
     max_risk_discuss_rounds: number;
     checkpoint_enabled: boolean;
     output_language: string;
+    google_thinking_level: string | null;
+    openai_reasoning_effort: string | null;
+    anthropic_effort: string | null;
   };
 };
 
@@ -127,6 +145,10 @@ export type Preferences = {
   max_risk_discuss_rounds: number;
   checkpoint_enabled: boolean;
   output_language: string;
+  google_thinking_level: string | null;
+  openai_reasoning_effort: string | null;
+  anthropic_effort: string | null;
+  custom_models: Record<string, string[]>;
 };
 
 export type RunPayload = {
@@ -142,6 +164,9 @@ export type RunPayload = {
   max_risk_discuss_rounds: number;
   checkpoint_enabled: boolean;
   output_language: string;
+  google_thinking_level: string | null;
+  openai_reasoning_effort: string | null;
+  anthropic_effort: string | null;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -89,12 +89,18 @@ def test_streaming_adapter_emits_each_completed_section(monkeypatch, tmp_path):
 
 def test_optional_overrides_do_not_erase_upstream_defaults(tmp_path):
     config = adapter._build_config(
-        {"data_vendors": None, "temperature": None}, tmp_path / "report"
+        {
+            "data_vendors": None,
+            "temperature": None,
+            "openai_reasoning_effort": "high",
+        },
+        tmp_path / "report",
     )
     assert isinstance(config["data_vendors"], dict)
     assert config["data_vendors"]["core_stock_apis"]
     assert config["llm_timeout"] == adapter.LLM_REQUEST_TIMEOUT_SECONDS
     assert config["llm_max_retries"] == adapter.LLM_MAX_RETRIES
+    assert config["openai_reasoning_effort"] == "high"
 
 
 def test_console_graph_forwards_request_timeout():
@@ -112,6 +118,29 @@ def test_google_flash_lite_is_the_console_default():
     assert any(
         model["value"] == default_model
         for model in catalog["providers"]["google"]["deep"]
+    )
+
+
+def test_catalog_exposes_latest_models_custom_codes_and_reasoning_metadata():
+    catalog = adapter.upstream_catalog()
+    openai = catalog["providers"]["openai"]
+    google = catalog["providers"]["google"]
+
+    assert any(model["value"] == "gpt-5.6-sol" for model in openai["deep"])
+    assert any(model["value"] == "custom" for model in openai["quick"])
+    assert "max" in next(
+        model["reasoning_levels"]
+        for model in openai["deep"]
+        if model["value"] == "gpt-5.6-sol"
+    )
+    flash_lite = next(
+        model for model in google["quick"] if model["value"] == "gemini-3.5-flash-lite"
+    )
+    assert flash_lite["default_reasoning_level"] == "minimal"
+    assert "minimal" not in next(
+        model["reasoning_levels"]
+        for model in google["quick"]
+        if model["value"] == "gemini-3.7-flash"
     )
 
 

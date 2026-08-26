@@ -107,7 +107,11 @@ async def create_run(payload: RunCreate, request: Request) -> RunCreated:
     client = request.client.host if request.client else "local"
     if not _launch_allowed(client):
         raise HTTPException(status_code=429, detail="Run launch limit reached; try again in a minute.")
-    available = {item["id"] for item in get_provider_configuration()["providers"]}
+    available = {
+        item["id"]
+        for item in get_provider_configuration()["providers"]
+        if item["configured"]
+    }
     if payload.llm_provider not in available:
         raise HTTPException(
             status_code=400,

@@ -27,16 +27,20 @@ def get_provider_configuration() -> dict[str, Any]:
             )
             availability = "aws_credentials"
 
-        if configured:
-            available.append(
-                {
-                    "id": name,
-                    "availability": availability,
-                    "quick_models": details["quick"],
-                    "deep_models": details["deep"],
-                    "masked_key": f"••••{os.getenv(key_env, '')[-4:]}" if key_env and os.getenv(key_env) else None,
-                }
-            )
+        available.append(
+            {
+                "id": name,
+                "availability": availability,
+                "configured": configured,
+                "key_env": key_env,
+                "quick_models": details["quick"],
+                "deep_models": details["deep"],
+                "reasoning": details.get("reasoning"),
+                "masked_key": f"••••{os.getenv(key_env, '')[-4:]}"
+                if key_env and os.getenv(key_env)
+                else None,
+            }
+        )
 
     return {"providers": available, "defaults": catalog["defaults"]}
 

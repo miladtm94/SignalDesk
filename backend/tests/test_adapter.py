@@ -144,6 +144,25 @@ def test_catalog_exposes_latest_models_custom_codes_and_reasoning_metadata():
     )
 
 
+def test_catalog_exposes_the_original_cli_output_languages():
+    catalog = adapter.upstream_catalog()
+    values = [language["value"] for language in catalog["output_languages"]]
+
+    assert values == [
+        "English",
+        "Chinese",
+        "Japanese",
+        "Korean",
+        "Hindi",
+        "Spanish",
+        "Portuguese",
+        "French",
+        "German",
+        "Arabic",
+        "Russian",
+    ]
+
+
 @pytest.mark.integration
 @pytest.mark.skipif(
     not __import__("os").getenv("TRADING_CONSOLE_RUN_INTEGRATION"),

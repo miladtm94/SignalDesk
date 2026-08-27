@@ -29,6 +29,7 @@ from tradingagents.graph.checkpointer import clear_checkpoint, get_checkpointer,
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
 from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS, get_reasoning_control
+from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,10 @@ def upstream_catalog() -> dict[str, Any]:
         }
     return {
         "providers": providers,
+        "output_languages": [
+            {"label": label, "value": value}
+            for label, value in OUTPUT_LANGUAGE_OPTIONS
+        ],
         "defaults": {
             "llm_provider": "google",
             "deep_think_llm": google_flash_lite,

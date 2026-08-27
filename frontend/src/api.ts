@@ -4,6 +4,7 @@ export type ModelOption = {
   reasoning_levels: string[];
   default_reasoning_level: string | null;
 };
+export type OutputLanguageOption = { label: string; value: string };
 export type ReasoningControl = {
   config_key: "google_thinking_level" | "openai_reasoning_effort" | "anthropic_effort";
   env_var: string;
@@ -24,6 +25,7 @@ export type Provider = {
 
 export type ProviderResponse = {
   providers: Provider[];
+  output_languages: OutputLanguageOption[];
   defaults: {
     llm_provider: string;
     deep_think_llm: string;

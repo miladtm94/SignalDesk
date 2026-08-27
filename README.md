@@ -302,3 +302,21 @@ Please reference our work if you find *TradingAgents* provides you with some hel
       url={https://arxiv.org/abs/2412.20138}, 
 }
 ```
+
+---
+
+<!-- Fork-specific contribution notes. The original TradingAgents README above is preserved. -->
+
+## Web Research Console Contributions
+
+This fork extends the original TradingAgents project with a local, integrated web research console while preserving the upstream framework and CLI.
+
+- A responsive React interface for launching analyses, monitoring progress, browsing saved reports, comparing research notes, and removing individual runs.
+- A single development command that starts the backend and frontend together, with stale-run recovery and clearer runtime error reporting.
+- Readable tabbed run details that prioritize the final portfolio decision, research decision, and trading plan before the supporting analyst and debate sections.
+- A current strategy chart with analysis-derived entry, take-profit, and stop-loss markers.
+- Workspace management for multiple stored provider credentials with exactly one active provider, expanded quick/deep model catalogs, custom model IDs, and model-aware reasoning or thinking controls.
+- Output-language selection matching the original CLI languages, with support for a custom language.
+- Local encrypted secret storage, run history, checkpoints, usage metadata, notes, report exports, and reproducibility records.
+
+These additions are maintained as a fork-specific application layer. The original authorship, research citation, and upstream project documentation remain unchanged above.

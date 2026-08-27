@@ -8,6 +8,7 @@ from rich.console import Console
 from cli.models import AnalystType, AssetType
 from tradingagents.llm_clients.api_key_env import get_api_key_env
 from tradingagents.llm_clients.model_catalog import get_model_options
+from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
 
 console = Console()
 
@@ -655,17 +656,10 @@ def ask_output_language() -> str:
     choice = questionary.select(
         "Select Output Language:",
         choices=[
-            questionary.Choice("English (default)", "English"),
-            questionary.Choice("Chinese (中文)", "Chinese"),
-            questionary.Choice("Japanese (日本語)", "Japanese"),
-            questionary.Choice("Korean (한국어)", "Korean"),
-            questionary.Choice("Hindi (हिन्दी)", "Hindi"),
-            questionary.Choice("Spanish (Español)", "Spanish"),
-            questionary.Choice("Portuguese (Português)", "Portuguese"),
-            questionary.Choice("French (Français)", "French"),
-            questionary.Choice("German (Deutsch)", "German"),
-            questionary.Choice("Arabic (العربية)", "Arabic"),
-            questionary.Choice("Russian (Русский)", "Russian"),
+            *[
+                questionary.Choice(label, value)
+                for label, value in OUTPUT_LANGUAGE_OPTIONS
+            ],
             questionary.Choice("Custom language", "custom"),
         ],
         style=questionary.Style([

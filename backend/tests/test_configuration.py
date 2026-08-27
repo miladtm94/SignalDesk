@@ -16,6 +16,10 @@ def test_provider_catalog_distinguishes_supported_configured_and_active(monkeypa
         assert by_id["ollama"]["configured"] is True
         assert by_id["openai"]["key_env"] == "OPENAI_API_KEY"
 
+        languages = client.get("/api/config/providers").json()["output_languages"]
+        assert languages[0] == {"label": "English (default)", "value": "English"}
+        assert languages[-1]["value"] == "Russian"
+
 
 def test_custom_model_and_single_active_provider_are_persisted():
     payload = {

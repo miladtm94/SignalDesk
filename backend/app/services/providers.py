@@ -42,7 +42,11 @@ def get_provider_configuration() -> dict[str, Any]:
             }
         )
 
-    return {"providers": available, "defaults": catalog["defaults"]}
+    return {
+        "providers": available,
+        "output_languages": catalog["output_languages"],
+        "defaults": catalog["defaults"],
+    }
 
 
 def get_vendor_configuration() -> dict[str, Any]:

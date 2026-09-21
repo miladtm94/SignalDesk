@@ -1,9 +1,9 @@
 # Known upstream integration issues
 
-## Typed decision objects are not retained in graph state (v0.3.1)
+## Typed decision objects are not retained in graph state (v0.5.0)
 
 TradingAgents uses Pydantic schemas for the Research Manager, Trader, Portfolio
-Manager, and Sentiment Analyst, but v0.3.1 immediately renders those objects to
+Manager, and Sentiment Analyst, but v0.5.0 immediately renders those objects to
 markdown before returning node state. The original typed objects are therefore
 not available to external callers. `process_signal()` safely exposes the final
 five-tier portfolio rating; trader action, prices, time horizon, and sentiment

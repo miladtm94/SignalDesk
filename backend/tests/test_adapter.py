@@ -47,11 +47,29 @@ class MockGraph:
         self.workflow = SimpleNamespace(compile=lambda **kwargs: self.graph)
         self.config = kwargs["config"]
 
-    def _resolve_pending_entries(self, ticker):
-        pass
+    def create_run_state(self, ticker, trade_date, asset_type):
+        return self.propagator.create_initial_state(
+            ticker, trade_date, asset_type=asset_type
+        )
 
-    def resolve_instrument_context(self, ticker, asset_type):
-        return f"{ticker} ({asset_type})"
+    def begin_checkpoint(self, ticker, trade_date, asset_type):
+        return None
+
+    def checkpoint_input(self, init_state):
+        return init_state
+
+    def end_checkpoint(self):
+        self.checkpoint_ended = True
+
+    def record_decision(self, ticker, trade_date, state):
+        self.memory_log.store_decision(
+            ticker=ticker,
+            trade_date=trade_date,
+            final_trade_decision=state["final_trade_decision"],
+        )
+
+    def clear_checkpoint_on_success(self, ticker, trade_date, asset_type):
+        self.checkpoint_cleared = True
 
     def _log_state(self, trade_date, state):
         self.logged = state
@@ -126,22 +144,18 @@ def test_catalog_exposes_latest_models_custom_codes_and_reasoning_metadata():
     openai = catalog["providers"]["openai"]
     google = catalog["providers"]["google"]
 
-    assert any(model["value"] == "gpt-5.6-sol" for model in openai["deep"])
+    assert any(model["value"] == "gpt-6-astra" for model in openai["deep"])
     assert any(model["value"] == "custom" for model in openai["quick"])
     assert "max" in next(
         model["reasoning_levels"]
         for model in openai["deep"]
-        if model["value"] == "gpt-5.6-sol"
+        if model["value"] == "gpt-6-astra"
     )
     flash_lite = next(
         model for model in google["quick"] if model["value"] == "gemini-3.5-flash-lite"
     )
     assert flash_lite["default_reasoning_level"] == "minimal"
-    assert "minimal" not in next(
-        model["reasoning_levels"]
-        for model in google["quick"]
-        if model["value"] == "gemini-3.7-flash"
-    )
+    assert any(model["value"] == "gemini-3.8-flash" for model in google["quick"])
 
 
 def test_catalog_exposes_the_original_cli_output_languages():

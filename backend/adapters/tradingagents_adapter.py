@@ -25,13 +25,55 @@ from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS
 from tradingagents.dataflows.stockstats_utils import load_ohlcv
 from tradingagents.dataflows.symbol_utils import normalize_symbol
 from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.graph.checkpointer import clear_checkpoint, get_checkpointer, thread_id
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
-from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS, get_reasoning_control
+from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
 from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
 
 logger = logging.getLogger(__name__)
+
+
+_REASONING_CONTROLS: dict[str, dict[str, Any]] = {
+    "openai": {
+        "config_key": "openai_reasoning_effort",
+        "env_var": "TRADINGAGENTS_OPENAI_REASONING_EFFORT",
+        "label": "Reasoning effort",
+        "levels": ["none", "low", "medium", "high", "xhigh", "max"],
+        "default": "medium",
+    },
+    "google": {
+        "config_key": "google_thinking_level",
+        "env_var": "TRADINGAGENTS_GOOGLE_THINKING_LEVEL",
+        "label": "Thinking level",
+        "levels": ["minimal", "low", "medium", "high"],
+        "default": "medium",
+    },
+    "anthropic": {
+        "config_key": "anthropic_effort",
+        "env_var": "TRADINGAGENTS_ANTHROPIC_EFFORT",
+        "label": "Reasoning effort",
+        "levels": ["low", "medium", "high"],
+        "default": "high",
+    },
+}
+
+
+def _reasoning_control(provider: str, model: str) -> dict[str, Any] | None:
+    """Describe the provider knobs that upstream forwards to its LLM clients.
+
+    Upstream v0.5.0 no longer publishes UI metadata in ``model_catalog`` even
+    though the three configuration keys remain supported. Keep this web-only
+    presentation metadata at the adapter boundary instead of restoring it to
+    the core package.
+    """
+    control = _REASONING_CONTROLS.get(provider.lower())
+    if control is None:
+        return None
+    result = copy.deepcopy(control)
+    model_name = model.lower()
+    if provider == "google" and model_name != "custom" and "flash-lite" in model_name:
+        result["default"] = "minimal"
+    return result
 
 
 class ConsoleTradingAgentsGraph(TradingAgentsGraph):
@@ -155,7 +197,7 @@ def upstream_catalog() -> dict[str, Any]:
             google_flash_lite = flash_lite[1] if flash_lite else quick_options[0][1]
         def model_option(option: tuple[str, str], provider_name: str = provider) -> dict[str, Any]:
             label, value = option
-            reasoning = get_reasoning_control(provider_name, value)
+            reasoning = _reasoning_control(provider_name, value)
             return {
                 "label": label,
                 "value": value,
@@ -163,7 +205,7 @@ def upstream_catalog() -> dict[str, Any]:
                 "default_reasoning_level": reasoning["default"] if reasoning else None,
             }
 
-        provider_reasoning = get_reasoning_control(provider, "custom")
+        provider_reasoning = _reasoning_control(provider, "custom")
         providers[provider] = {
             "key_env": PROVIDER_API_KEY_ENV.get(provider),
             "quick": [model_option(option) for option in quick_options],
@@ -300,7 +342,7 @@ def run_streaming_analysis(
     stats = StatsCallbackHandler()
     seen: dict[str, tuple[str, dict[str, Any] | None]] = {}
     graph: ConsoleTradingAgentsGraph | None = None
-    checkpoint_context = None
+    checkpoint_started = False
 
     def emit_changed(state: dict[str, Any]) -> None:
         for event in _extract_section_events(state):
@@ -317,30 +359,15 @@ def run_streaming_analysis(
             callbacks=[stats],
         )
         graph.ticker = ticker
-        graph._resolve_pending_entries(ticker)
-        if config.get("checkpoint_enabled"):
-            checkpoint_context = get_checkpointer(config["data_cache_dir"], ticker)
-            saver = checkpoint_context.__enter__()
-            graph.graph = graph.workflow.compile(checkpointer=saver)
-
-        past_context = graph.memory_log.get_past_context(ticker)
-        instrument_context = graph.resolve_instrument_context(ticker, asset_type)
-        init_state = graph.propagator.create_initial_state(
-            ticker,
-            trade_date,
-            asset_type=asset_type,
-            past_context=past_context,
-            instrument_context=instrument_context,
-        )
+        init_state = graph.create_run_state(ticker, trade_date, asset_type)
         args = graph.propagator.get_graph_args(callbacks=[stats])
-        if config.get("checkpoint_enabled"):
-            signature = graph._run_signature(asset_type)
-            args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = thread_id(
-                ticker, trade_date, signature
-            )
+        checkpoint_tid = graph.begin_checkpoint(ticker, trade_date, asset_type)
+        checkpoint_started = True
+        if checkpoint_tid is not None:
+            args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = checkpoint_tid
 
         final_state: dict[str, Any] | None = None
-        for chunk in graph.graph.stream(init_state, **args):
+        for chunk in graph.graph.stream(graph.checkpoint_input(init_state), **args):
             final_state = chunk
             emit_changed(chunk)
         if final_state is None:
@@ -348,13 +375,8 @@ def run_streaming_analysis(
 
         graph.curr_state = final_state
         graph._log_state(trade_date, final_state)
-        graph.memory_log.store_decision(
-            ticker=ticker,
-            trade_date=trade_date,
-            final_trade_decision=final_state["final_trade_decision"],
-        )
-        if config.get("checkpoint_enabled"):
-            clear_checkpoint(config["data_cache_dir"], ticker, trade_date, graph._run_signature(asset_type))
+        graph.record_decision(ticker, trade_date, final_state)
+        graph.clear_checkpoint_on_success(ticker, trade_date, asset_type)
         decision = graph.process_signal(final_state["final_trade_decision"])
         report_path = graph.save_reports(final_state, ticker, save_path=report_dir)
         return AdapterResult(final_state, decision, stats.snapshot(), report_path)
@@ -376,9 +398,9 @@ def run_streaming_analysis(
                 "adapter_error": type(streaming_error).__name__,
             },
         )
-        if checkpoint_context is not None:
-            checkpoint_context.__exit__(None, None, None)
-            checkpoint_context = None
+        if graph is not None and checkpoint_started:
+            graph.end_checkpoint()
+            checkpoint_started = False
         fallback = ConsoleTradingAgentsGraph(
             selected_analysts=selected_analysts,
             debug=False,
@@ -390,5 +412,5 @@ def run_streaming_analysis(
         report_path = fallback.save_reports(final_state, ticker, save_path=report_dir)
         return AdapterResult(final_state, decision, stats.snapshot(), report_path, degraded_streaming=True)
     finally:
-        if checkpoint_context is not None:
-            checkpoint_context.__exit__(None, None, None)
+        if graph is not None and checkpoint_started:
+            graph.end_checkpoint()

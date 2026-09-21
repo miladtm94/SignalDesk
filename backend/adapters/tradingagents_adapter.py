@@ -250,7 +250,7 @@ def _jsonable(value: Any) -> dict[str, Any] | None:
 def _extract_section_events(state: dict[str, Any]) -> list[SectionEvent]:
     """Map accumulated LangGraph state to UI sections.
 
-    Current v0.3.1 renders typed decisions back to markdown before placing them
+    Current v0.5.0 renders typed decisions back to markdown before placing them
     in state. We intentionally do not regex those documents. If an upstream
     release exposes its Pydantic value alongside the rendered text, this helper
     will persist it through the conventional ``*_structured`` keys.

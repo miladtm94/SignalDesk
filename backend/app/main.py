@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,4 +43,8 @@ app.include_router(watchlist.router)
 
 @app.get("/api/health", tags=["system"])
 def health():
-    return {"status": "ok", "upstream": "TradingAgents v0.3.1"}
+    try:
+        upstream_version = version("tradingagents")
+    except PackageNotFoundError:
+        upstream_version = "unknown"
+    return {"status": "ok", "upstream": f"TradingAgents v{upstream_version}"}

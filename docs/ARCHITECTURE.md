@@ -23,7 +23,7 @@ migration change rather than an application rewrite.
 
 The adapter persists structured JSON when upstream state exposes a Pydantic
 object or `*_structured` companion value. It never regexes decision markdown.
-At v0.3.1 the portfolio rating is also available through the supported
+At v0.5.0 the portfolio rating is also available through the supported
 `process_signal()` method; other denormalized fields remain nullable when the
 upstream state carries only rendered markdown. See `KNOWN_UPSTREAM_ISSUES.md`.
 

@@ -49,7 +49,7 @@
 
 <div align="center">
 
-🚀 [TradingAgents](#tradingagents-framework) | ⚡ [Installation & CLI](#installation-and-cli) | 🎬 [Demo](https://www.youtube.com/watch?v=90gr5lwjIho) | 📦 [Package Usage](#tradingagents-package) | 🤝 [Contributing](#contributing) | 📄 [Citation](#citation)
+🚀 [TradingAgents](#tradingagents-framework) | 🖥️ [SignalDesk](#signaldesk-research-console-this-fork) | ⚡ [Installation & CLI](#installation-and-cli) | 🎬 [Demo](https://www.youtube.com/watch?v=90gr5lwjIho) | 📦 [Package Usage](#tradingagents-package) | 🤝 [Contributing](#contributing) | 📄 [Citation](#citation)
 
 </div>
 
@@ -66,6 +66,62 @@ TradingAgents is a multi-agent trading framework that mirrors the dynamics of re
 </p>
 
 > TradingAgents framework is designed for research purposes. Trading performance may vary based on many factors, including the chosen backbone language models, model temperature, trading periods, the quality of data, and other non-deterministic factors. [It is not intended as financial, investment, or trading advice.](https://tauric.ai/disclaimer/)
+
+## SignalDesk Research Console (This Fork)
+
+SignalDesk turns the TradingAgents pipeline into a local research workspace. It
+keeps the upstream framework and CLI intact while adding a browser interface for
+configuring runs, following the agent team in real time, and reviewing durable,
+reproducible research outputs.
+
+| Area | Contribution in this fork |
+| --- | --- |
+| Research setup | Select the instrument, date, analyst team, provider, quick/deep models, reasoning controls, debate depth, language, and checkpointing from one screen. |
+| Live observability | Stream completed agent sections as they arrive, with run progress, token usage, estimated cost, and a current candlestick chart. |
+| Decision workspace | Read the portfolio decision, research verdict, trading plan, risk debate, and analyst evidence in focused tabs; export the completed report as Markdown. |
+| Persistence and recovery | Store run history, notes, usage, checkpoints, and encrypted provider credentials locally; resume interrupted LangGraph runs without repeating completed work. |
+| Reproducibility | Preserve the exact provider, models, reasoning settings, temperature, debate rounds, and checkpoint state alongside every result. |
+
+### Configure a research run
+
+Build the analyst desk and see the estimated run cost before any paid model call
+is made.
+
+<p align="center">
+  <img src="screenshots/Overview-SignalDesk.png" alt="SignalDesk new analysis screen with analyst and model configuration" width="100%">
+</p>
+
+### Follow the agents live
+
+The run view captures each research section, provider usage, and market context
+while the multi-agent workflow is still running.
+
+<p align="center">
+  <img src="screenshots/AgentAnalysing-SignalDesk.png" alt="SignalDesk live analysis view with progress and candlestick chart" width="100%">
+</p>
+
+### Review the final decision and evidence
+
+Completed runs keep the full portfolio-manager decision, supporting debate,
+model configuration, and research notes together instead of reducing the result
+to a single rating.
+
+<p align="center">
+  <img src="screenshots/DecisionWindow-SignalDesk.png" alt="SignalDesk completed portfolio decision with reproducibility record and notebook" width="100%">
+</p>
+
+### Run SignalDesk locally
+
+```bash
+git clone https://github.com/miladtm94/TradingAgents.git
+cd TradingAgents
+cp .env.example .env  # add the API key for your chosen provider
+docker compose up --build web-backend web-frontend
+```
+
+Open `http://127.0.0.1:4173`. The services bind to loopback, credentials stay
+on the local machine, completed reports are written under `./reports/`, and the
+database/checkpoints remain in the `research_console_data` Docker volume.
 
 Our framework decomposes complex trading tasks into specialized roles.
 
@@ -105,11 +161,14 @@ Our framework decomposes complex trading tasks into specialized roles.
 
 ### Installation
 
-Clone TradingAgents:
+Clone this SignalDesk-enabled fork:
 ```bash
-git clone https://github.com/TauricResearch/TradingAgents.git
+git clone https://github.com/miladtm94/TradingAgents.git
 cd TradingAgents
 ```
+
+The original framework is maintained at
+[`TauricResearch/TradingAgents`](https://github.com/TauricResearch/TradingAgents).
 
 Create a virtual environment in any of your favorite environment managers:
 ```bash
@@ -137,6 +196,17 @@ docker compose run --rm tradingagents
 ```
 
 After updating the repository, rebuild the image with `docker compose build`.
+
+Completed CLI reports are saved under `./reports/` on the host. To run the web
+console instead, use:
+
+```bash
+docker compose up --build web-backend web-frontend
+```
+
+Then open `http://127.0.0.1:4173`. Web reports are also saved under
+`./reports/`; the database, checkpoints, and memory remain in the
+`research_console_data` Docker volume.
 
 For local models with Ollama:
 ```bash
@@ -381,21 +451,3 @@ Please reference our work if you find *TradingAgents* provides you with some hel
       url={https://arxiv.org/abs/2412.20138}, 
 }
 ```
-
----
-
-<!-- Fork-specific contribution notes. The original TradingAgents README above is preserved. -->
-
-## Web Research Console Contributions
-
-This fork extends the original TradingAgents project with a local, integrated web research console while preserving the upstream framework and CLI.
-
-- A responsive React interface for launching analyses, monitoring progress, browsing saved reports, comparing research notes, and removing individual runs.
-- A single development command that starts the backend and frontend together, with stale-run recovery and clearer runtime error reporting.
-- Readable tabbed run details that prioritize the final portfolio decision, research decision, and trading plan before the supporting analyst and debate sections.
-- A current strategy chart with analysis-derived entry, take-profit, and stop-loss markers.
-- Workspace management for multiple stored provider credentials with exactly one active provider, expanded quick/deep model catalogs, custom model IDs, and model-aware reasoning or thinking controls.
-- Output-language selection matching the original CLI languages, with support for a custom language.
-- Local encrypted secret storage, run history, checkpoints, usage metadata, notes, report exports, and reproducibility records.
-
-These additions are maintained as a fork-specific application layer. The original authorship, research citation, and upstream project documentation remain unchanged above.

@@ -17,7 +17,7 @@ from backend.adapters.tradingagents_adapter import SectionEvent, run_streaming_a
 from ..database import SessionLocal
 from ..models import Decision, Run, RunEvent, RunSection, Usage
 from ..schemas import RunCreate
-from ..settings import RESULTS_DIR, RUN_HEARTBEAT_SECONDS
+from ..settings import REPORTS_DIR, RUN_HEARTBEAT_SECONDS
 from .costs import actual_usage_cost, estimate_run_cost
 
 logger = logging.getLogger(__name__)
@@ -159,7 +159,7 @@ class RunOrchestrator:
                     "asset_type": run.asset_type,
                     "selected_analysts": list(run.selected_analysts),
                     "config_overrides": dict(run.config_snapshot),
-                    "report_dir": RESULTS_DIR / run.id,
+                    "report_dir": REPORTS_DIR / run.id,
                 }
             self._record_and_publish(run_id, "status", {"status": "running"})
 
@@ -312,8 +312,8 @@ class RunOrchestrator:
 
     @staticmethod
     def delete_report_tree(run_id: str) -> None:
-        target = (RESULTS_DIR / run_id).resolve()
-        if target.parent == RESULTS_DIR.resolve() and target.exists():
+        target = (REPORTS_DIR / run_id).resolve()
+        if target.parent == REPORTS_DIR.resolve() and target.exists():
             shutil.rmtree(target)
 
 

@@ -4,8 +4,12 @@ import os
 from pathlib import Path
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+PROJECT_DIR = BACKEND_DIR.parent
 DATA_DIR = Path(os.getenv("TRADING_CONSOLE_DATA_DIR", BACKEND_DIR / "data")).resolve()
 RESULTS_DIR = DATA_DIR / "results"
+REPORTS_DIR = Path(
+    os.getenv("TRADING_CONSOLE_REPORTS_DIR", PROJECT_DIR / "reports")
+).resolve()
 CACHE_DIR = DATA_DIR / "checkpoints"
 MEMORY_PATH = DATA_DIR / "memory" / "trading_memory.md"
 
@@ -15,7 +19,7 @@ os.environ["TRADINGAGENTS_RESULTS_DIR"] = str(RESULTS_DIR)
 os.environ["TRADINGAGENTS_CACHE_DIR"] = str(CACHE_DIR)
 os.environ["TRADINGAGENTS_MEMORY_LOG_PATH"] = str(MEMORY_PATH)
 
-for path in (DATA_DIR, RESULTS_DIR, CACHE_DIR, MEMORY_PATH.parent):
+for path in (DATA_DIR, RESULTS_DIR, REPORTS_DIR, CACHE_DIR, MEMORY_PATH.parent):
     path.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = os.getenv(

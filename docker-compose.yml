@@ -8,8 +8,10 @@ services:
     environment:
       - TRADING_CONSOLE_HOST=0.0.0.0
       - TRADING_CONSOLE_CORS_ORIGINS=http://localhost:4173,http://127.0.0.1:4173
+      - TRADING_CONSOLE_REPORTS_DIR=/app/reports
     volumes:
       - research_console_data:/app/backend/data
+      - ./reports:/app/reports
     ports:
       - "127.0.0.1:8765:8000"
     restart: unless-stopped
@@ -30,6 +32,7 @@ services:
       - .env
     volumes:
       - tradingagents_data:/home/appuser/.tradingagents
+      - ./reports:/home/appuser/app/reports
     tty: true
     stdin_open: true
 
@@ -49,6 +52,7 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434/v1
     volumes:
       - tradingagents_data:/home/appuser/.tradingagents
+      - ./reports:/home/appuser/app/reports
     depends_on:
       - ollama
     tty: true

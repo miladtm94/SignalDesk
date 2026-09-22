@@ -1,6 +1,5 @@
-# Web console runtime. The upstream package is intentionally pinned to the
-# release this adapter was verified against; see docs/UPSTREAM_UPGRADE.md.
-tradingagents @ git+https://github.com/TauricResearch/TradingAgents.git@v0.3.1
+# Web console runtime. Install this repository's TradingAgents package first;
+# the adapter and web console must use the same local code version.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 SQLAlchemy==2.0.36

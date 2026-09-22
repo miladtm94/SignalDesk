@@ -40,7 +40,11 @@ All console-owned state is redirected under `backend/data/` (or
 - `console.sqlite3` — runs, sections, events, decisions, usage, notes, and keys
 - `checkpoints/` — LangGraph per-ticker checkpoint databases
 - `memory/` — TradingAgents decision memory log
-- `results/` — JSON state and markdown report trees
+- `results/` — internal JSON state logs
+
+Completed markdown report trees are written to the repository-level
+`reports/` directory (or `TRADING_CONSOLE_REPORTS_DIR`). Docker bind-mounts
+that directory, so reports remain available on the host after containers stop.
 
 The directory is git-ignored. `POST /api/runs` is rate-limited in process to
 three launches per minute per client. Set `TRADING_CONSOLE_DAILY_CAP_USD` to a

@@ -7,11 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY backend/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
-COPY backend /app/backend
+COPY . /app
+RUN pip install --no-cache-dir . -r /tmp/requirements.txt
 
 RUN useradd --create-home console \
  && mkdir -p /app/backend/data \
+ && mkdir -p /app/reports \
  && chown -R console:console /app
 USER console
 

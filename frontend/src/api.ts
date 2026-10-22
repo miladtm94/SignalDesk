@@ -12,6 +12,19 @@ export type ReasoningControl = {
   levels: string[];
   default: string | null;
 };
+export type Subscription = {
+  ready: boolean;
+  installed: boolean;
+  message: string;
+  login_command: string;
+  signed_in?: boolean;
+  token?: boolean;
+  token_env?: string;
+  account?: string | null;
+  plan?: string | null;
+  cli_path?: string;
+  version?: string | null;
+};
 export type Provider = {
   id: string;
   availability: string;
@@ -21,6 +34,7 @@ export type Provider = {
   deep_models: ModelOption[];
   reasoning: ReasoningControl | null;
   masked_key: string | null;
+  subscription: Subscription | null;
 };
 
 export type ProviderResponse = {
@@ -57,8 +71,10 @@ export type Usage = {
   tokens_in: number;
   tokens_out: number;
   estimated_cost_usd: number;
+  api_equivalent_usd: number | null;
 };
 
+export type RunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 export type RunSummary = {
   id: string;
   ticker: string;
@@ -74,7 +90,7 @@ export type RunSummary = {
   checkpoint_enabled: boolean;
   output_language: string;
   estimated_cost_usd: number;
-  status: "queued" | "running" | "completed" | "failed";
+  status: RunStatus;
   error_message: string | null;
   starred: boolean;
   created_at: string;
@@ -82,6 +98,7 @@ export type RunSummary = {
   completed_at: string | null;
   decision: Decision | null;
   usage: Usage | null;
+  used_portfolio: boolean;
 };
 
 export type RunSection = {
@@ -113,6 +130,8 @@ export type RunDetail = RunSummary & {
   sections: RunSection[];
   notes: RunNote[];
   events: RunEvent[];
+  portfolio_snapshot: Portfolio | null;
+  portfolio_context: string | null;
 };
 
 export type ChartCandle = {
@@ -169,7 +188,14 @@ export type RunPayload = {
   google_thinking_level: string | null;
   openai_reasoning_effort: string | null;
   anthropic_effort: string | null;
+  use_portfolio: boolean;
 };
+
+export type Position = { ticker: string; quantity: number; average_price: number | null };
+export type Portfolio = { cash: number | null; currency: string | null; positions: Position[] };
+export type SavedPortfolio = Portfolio & { configured: boolean; updated_at: string | null };
+export type PortfolioPreview = { ticker: string; held: Position | null; context: string };
+export type Quote = { ticker: string; last_close: number | null; as_of: string | null; error: string | null };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -178,16 +204,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }));
-    throw new Error(body.detail ?? "Request failed");
+    // FastAPI validation errors arrive as a list of {loc, msg}; show their messages.
+    const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg?.replace(/^Value error, /, "")).filter(Boolean).join("; ") : body.detail;
+    throw new Error(detail || "Request failed");
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
 export const api = {
-  providers: () => request<ProviderResponse>("/api/config/providers"),
+  providers: (fresh = false) => request<ProviderResponse>(`/api/config/providers${fresh ? "?fresh=true" : ""}`),
   vendors: () => request<{ vendors: Record<string, string> }>("/api/config/vendors"),
-  costs: () => request<{ prices: Record<string, { input: number; output: number }> }>("/api/config/costs"),
+  costs: () => request<{ prices: Record<string, { input: number; output: number }>; plan_billed_providers: string[] }>("/api/config/costs"),
+  subscription: (provider: string) => request<Subscription>(`/api/config/subscriptions/${provider}?fresh=true`),
   runtime: () => request<{ data_directory: string; localhost_only: boolean }>("/api/config/runtime"),
   preferences: () => request<Preferences>("/api/config/preferences"),
   savePreferences: (value: Preferences) => request<Preferences>("/api/config/preferences", { method: "PUT", body: JSON.stringify(value) }),
@@ -201,7 +230,13 @@ export const api = {
   deleteRun: (id: string) => request<void>(`/api/runs/${id}`, { method: "DELETE" }),
   star: (id: string, starred: boolean) => request<RunSummary>(`/api/runs/${id}`, { method: "PATCH", body: JSON.stringify({ starred }) }),
   resume: (id: string) => request<{ run_id: string }>(`/api/runs/${id}/resume`, { method: "POST" }),
+  stopRun: (id: string) => request<RunSummary>(`/api/runs/${id}/stop`, { method: "POST" }),
   note: (id: string, note_text: string, tags: string[]) => request<RunNote>(`/api/runs/${id}/notes`, { method: "POST", body: JSON.stringify({ note_text, tags, starred: false }) }),
+  portfolio: () => request<SavedPortfolio>("/api/portfolio"),
+  savePortfolio: (value: Portfolio) => request<SavedPortfolio>("/api/portfolio", { method: "PUT", body: JSON.stringify(value) }),
+  clearPortfolio: () => request<void>("/api/portfolio", { method: "DELETE" }),
+  portfolioPreview: (ticker: string) => request<PortfolioPreview>(`/api/portfolio/preview?ticker=${encodeURIComponent(ticker)}`),
+  portfolioQuotes: () => request<Quote[]>("/api/portfolio/quotes"),
 };
 
 export function streamUrl(runId: string) {

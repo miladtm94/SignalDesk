@@ -8,9 +8,16 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 ANALYST_KEYS = {"market", "social", "news", "fundamentals"}
 
 
-class RunCreate(BaseModel):
-    ticker: str = Field(min_length=1, max_length=32)
-    trade_date: date
+def _compact_symbol(value: str) -> str:
+    value = value.strip().upper()
+    if not value or any(char.isspace() for char in value):
+        raise ValueError("ticker must be a compact exchange symbol")
+    return value
+
+
+class AnalysisSettings(BaseModel):
+    """What produces a decision: the analyst desk, models and debate depth."""
+
     asset_type: Literal["stock", "crypto"] = "stock"
     selected_analysts: list[str] = Field(
         default_factory=lambda: ["market", "social", "news", "fundamentals"],
@@ -22,21 +29,12 @@ class RunCreate(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_debate_rounds: int = Field(default=1, ge=1, le=10)
     max_risk_discuss_rounds: int = Field(default=1, ge=1, le=10)
-    checkpoint_enabled: bool = True
     output_language: str = Field(default="English", min_length=2, max_length=40)
-    benchmark_ticker: str | None = Field(default=None, max_length=32)
-    data_vendors: dict[str, str] | None = None
     google_thinking_level: Literal["minimal", "low", "medium", "high"] | None = None
     openai_reasoning_effort: Literal["none", "low", "medium", "high", "xhigh", "max"] | None = None
     anthropic_effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
-
-    @field_validator("ticker")
-    @classmethod
-    def normalize_ticker(cls, value: str) -> str:
-        value = value.strip().upper()
-        if not value or any(char.isspace() for char in value):
-            raise ValueError("ticker must be a compact exchange symbol")
-        return value
+    # Decide against the saved book (Holdings) instead of without portfolio context.
+    use_portfolio: bool = False
 
     @field_validator("selected_analysts")
     @classmethod
@@ -46,6 +44,19 @@ class RunCreate(BaseModel):
         if unknown:
             raise ValueError(f"unknown analysts: {', '.join(sorted(unknown))}")
         return unique
+
+
+class RunCreate(AnalysisSettings):
+    ticker: str = Field(min_length=1, max_length=32)
+    trade_date: date
+    checkpoint_enabled: bool = True
+    benchmark_ticker: str | None = Field(default=None, max_length=32)
+    data_vendors: dict[str, str] | None = None
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        return _compact_symbol(value)
 
 
 class RunCreated(BaseModel):
@@ -84,6 +95,7 @@ class UsageOut(BaseModel):
     tokens_in: int
     tokens_out: int
     estimated_cost_usd: float
+    api_equivalent_usd: float | None = None
 
 
 class NoteOut(BaseModel):
@@ -128,6 +140,7 @@ class RunSummary(BaseModel):
     completed_at: datetime | None
     decision: DecisionOut | None = None
     usage: UsageOut | None = None
+    used_portfolio: bool = False
 
 
 class RunDetail(RunSummary):
@@ -136,6 +149,10 @@ class RunDetail(RunSummary):
     sections: list[SectionOut]
     notes: list[NoteOut]
     events: list[EventOut]
+    portfolio_snapshot: dict[str, Any] | None = None
+    # The portfolio block exactly as the trader, risk analysts and portfolio
+    # manager read it for this run's ticker.
+    portfolio_context: str | None = None
 
 
 class ChartCandleOut(BaseModel):
@@ -239,3 +256,66 @@ class PreferencesWrite(BaseModel):
             valid = [model.strip() for model in models if model.strip() and not any(char.isspace() for char in model.strip())]
             cleaned[provider_id] = list(dict.fromkeys(valid))[:50]
         return cleaned
+
+
+class PositionIn(BaseModel):
+    ticker: str = Field(min_length=1, max_length=32)
+    quantity: float = Field(description="Signed units held; negative is short")
+    average_price: float | None = Field(default=None, gt=0)
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_ticker(cls, value: str) -> str:
+        return _compact_symbol(value)
+
+    @field_validator("quantity")
+    @classmethod
+    def held(cls, value: float) -> float:
+        if value == 0:
+            raise ValueError("a position needs a non-zero quantity; remove it to show none is held")
+        return value
+
+
+class PortfolioWrite(BaseModel):
+    """The caller's book: an empty positions list is a flat book, not a missing one."""
+
+    cash: float | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, max_length=12)
+    positions: list[PositionIn] = Field(default_factory=list, max_length=200)
+
+    @field_validator("currency")
+    @classmethod
+    def clean_currency(cls, value: str | None) -> str | None:
+        value = (value or "").strip().upper()
+        return value or None
+
+    @field_validator("positions")
+    @classmethod
+    def one_row_per_ticker(cls, value: list[PositionIn]) -> list[PositionIn]:
+        seen: set[str] = set()
+        for position in value:
+            if position.ticker in seen:
+                raise ValueError(f"{position.ticker} is listed twice; combine it into one position")
+            seen.add(position.ticker)
+        return value
+
+
+class PortfolioOut(BaseModel):
+    configured: bool
+    cash: float | None = None
+    currency: str | None = None
+    positions: list[PositionIn] = Field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+class PortfolioPreview(BaseModel):
+    ticker: str
+    held: PositionIn | None
+    context: str
+
+
+class PortfolioQuote(BaseModel):
+    ticker: str
+    last_close: float | None
+    as_of: str | None
+    error: str | None = None

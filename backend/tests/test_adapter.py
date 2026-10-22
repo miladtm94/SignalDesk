@@ -48,12 +48,13 @@ class MockGraph:
         self.workflow = SimpleNamespace(compile=lambda **kwargs: None)
         self.config = kwargs["config"]
 
-    def create_run_state(self, ticker, trade_date, asset_type):
+    def create_run_state(self, ticker, trade_date, asset_type, portfolio=None):
+        MockGraph.portfolio = portfolio
         return self.propagator.create_initial_state(
             ticker, trade_date, asset_type=asset_type
         )
 
-    def begin_checkpoint(self, ticker, trade_date, asset_type):
+    def begin_checkpoint(self, ticker, trade_date, asset_type, portfolio=None):
         return None
 
     def checkpoint_input(self, init_state):
@@ -69,7 +70,7 @@ class MockGraph:
             final_trade_decision=state["final_trade_decision"],
         )
 
-    def clear_checkpoint_on_success(self, ticker, trade_date, asset_type):
+    def clear_checkpoint_on_success(self, ticker, trade_date, asset_type, portfolio=None):
         self.checkpoint_cleared = True
 
     def save_reports(self, state, ticker, save_path):
@@ -208,3 +209,79 @@ def test_real_local_streaming_path(tmp_path):
     )
     assert result.report_path.exists()
     assert events
+
+
+def _run(monkeypatch, tmp_path, **kwargs):
+    monkeypatch.setattr(adapter, "ConsoleTradingAgentsGraph", MockGraph)
+    sections = []
+    result = adapter.run_streaming_analysis(
+        run_id="run-1",
+        ticker="NVDA",
+        trade_date="2026-08-25",
+        asset_type="stock",
+        selected_analysts=["market"],
+        config_overrides={"checkpoint_enabled": False, "llm_provider": "ollama"},
+        report_dir=tmp_path,
+        on_section=lambda event, usage: sections.append(event.section_key),
+        on_status=lambda event, payload: None,
+        **kwargs,
+    )
+    return result, sections
+
+
+def test_the_saved_book_reaches_the_graph_as_upstream_portfolio_context(monkeypatch, tmp_path):
+    book = {"cash": 25000.0, "currency": "USD",
+            "positions": [{"ticker": "NVDA", "quantity": 120, "average_price": 150.0}]}
+    _run(monkeypatch, tmp_path, portfolio=book)
+
+    assert MockGraph.portfolio.position_in("NVDA").quantity == 120
+    assert "Current position in NVDA: 120 units" in adapter.portfolio_context(book, "NVDA")
+
+
+def test_no_book_and_a_flat_book_stay_distinct(monkeypatch, tmp_path):
+    _run(monkeypatch, tmp_path, portfolio=None)
+    assert MockGraph.portfolio is None
+    _run(monkeypatch, tmp_path, portfolio={"cash": 1000.0, "positions": []})
+    assert MockGraph.portfolio is not None and MockGraph.portfolio.positions == []
+    assert adapter.portfolio_context(None, "NVDA") is None
+    assert "No current position in NVDA" in adapter.portfolio_context({"positions": []}, "NVDA")
+
+
+def test_a_stop_request_ends_the_run_between_steps(monkeypatch, tmp_path):
+    calls = iter([False, False, True])
+    with pytest.raises(adapter.RunStopped):
+        _run(monkeypatch, tmp_path, should_stop=lambda: next(calls))
+
+
+def test_a_plain_run_writes_state_logs_to_the_console_results_directory(tmp_path):
+    config = adapter._build_config({}, adapter.RESULTS_DIR)
+    assert config["results_dir"] == str(adapter.RESULTS_DIR)
+    assert config["memory_log_path"] == adapter.DEFAULT_CONFIG["memory_log_path"]
+
+
+def test_the_plan_usage_tally_keeps_the_api_equivalent_figure():
+    from langchain_core.outputs import ChatGeneration
+
+    stats = adapter.StatsCallbackHandler()
+    message = adapter.AIMessage(content="x", usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                                response_metadata={"api_equivalent_cost_usd": 0.25})
+    stats.on_llm_end(adapter.LLMResult(generations=[[ChatGeneration(message=message)]]))
+    snapshot = stats.snapshot()
+    assert (snapshot["tokens_in"], snapshot["tokens_out"], snapshot["api_equivalent_usd"]) == (10, 5, 0.25)
+
+
+def test_a_claude_plan_tier_keeps_a_whole_answer_timeout(monkeypatch):
+    seen = {}
+
+    def fake_create(config, tier, **extra):
+        seen[tier] = extra
+        return SimpleNamespace(get_llm=lambda: None)
+
+    monkeypatch.setattr(adapter, "_create_tier_client", fake_create)
+    config = {"llm_provider": "google", "deep_think_provider": "claude", "llm_timeout": 120}
+    adapter._trading_graph.create_tier_client(config, "deep")
+    adapter._trading_graph.create_tier_client(config, "quick")
+
+    assert seen["deep"]["timeout"] == adapter.claude_code.DEFAULT_TIMEOUT
+    assert seen["quick"]["timeout"] == 120
+

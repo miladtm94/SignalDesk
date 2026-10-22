@@ -22,8 +22,12 @@ def price_table() -> dict[str, dict[str, float]]:
     return {**DEFAULT_MODEL_COSTS, **loaded}
 
 
+# Billed to the person's own ChatGPT or Claude plan, not per token.
+PLAN_BILLED_PROVIDERS = frozenset({"claude", "chatgpt"})
+
+
 def model_rate(provider: str, model: str) -> dict[str, float]:
-    if provider in {"ollama", "openai_compatible"} and provider == "ollama":
+    if provider == "ollama" or provider in PLAN_BILLED_PROVIDERS:
         return price_table()["local"]
     return price_table().get(model, price_table()["default"])
 
@@ -65,6 +69,7 @@ def public_cost_table() -> dict[str, object]:
         "currency": "USD",
         "unit": "per_1k_tokens",
         "prices": price_table(),
+        "plan_billed_providers": sorted(PLAN_BILLED_PROVIDERS),
         "assumptions": {
             "quick_call_tokens": {"input": 5000, "output": 1500},
             "deep_call_tokens": {"input": 8000, "output": 2000},

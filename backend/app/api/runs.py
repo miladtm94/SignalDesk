@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict, deque
-from datetime import date, datetime, time as datetime_time, timezone
+from datetime import UTC, date, datetime, time as datetime_time
 from pathlib import Path
 
 from fastapi import (
@@ -19,7 +19,7 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from ...adapters.tradingagents_adapter import load_current_market_chart
+from ...adapters.tradingagents_adapter import load_current_market_chart, portfolio_context
 from ..database import SessionLocal
 from ..models import Decision, Run, RunEvent, RunNote, Usage
 from ..schemas import (
@@ -34,7 +34,8 @@ from ..schemas import (
 )
 from ..services.charts import strategy_levels
 from ..services.costs import estimate_run_cost
-from ..services.orchestrator import orchestrator
+from ..services.orchestrator import TERMINAL_STATUSES, orchestrator
+from ..services.portfolio import load_book
 from ..services.providers import get_provider_configuration
 from ..settings import DAILY_SPEND_CAP_USD
 
@@ -88,6 +89,7 @@ def _serialize_run(run: Run, detail: bool = False) -> dict:
         "completed_at": run.completed_at,
         "decision": run.decision,
         "usage": run.usage,
+        "used_portfolio": run.portfolio_snapshot is not None,
     }
     if detail:
         output.update(
@@ -97,6 +99,8 @@ def _serialize_run(run: Run, detail: bool = False) -> dict:
                 "sections": sorted(run.sections, key=lambda item: item.created_at),
                 "notes": sorted(run.notes, key=lambda item: item.created_at, reverse=True),
                 "events": sorted(run.events, key=lambda item: item.sequence),
+                "portfolio_snapshot": run.portfolio_snapshot,
+                "portfolio_context": portfolio_context(run.portfolio_snapshot, run.ticker),
             }
         )
     return output
@@ -119,6 +123,11 @@ async def create_run(payload: RunCreate, request: Request) -> RunCreated:
         )
     if payload.quick_think_llm == "custom" or payload.deep_think_llm == "custom":
         raise HTTPException(status_code=400, detail="Enter the exact custom model ID before launch.")
+    portfolio = None
+    if payload.use_portfolio:
+        portfolio, _ = load_book()
+        if portfolio is None:
+            raise HTTPException(status_code=400, detail="Save your holdings before deciding against them.")
 
     estimate = estimate_run_cost(
         provider=payload.llm_provider,
@@ -129,7 +138,7 @@ async def create_run(payload: RunCreate, request: Request) -> RunCreated:
         risk_rounds=payload.max_risk_discuss_rounds,
     )
     if DAILY_SPEND_CAP_USD > 0:
-        today = datetime.combine(date.today(), datetime_time.min, tzinfo=timezone.utc)
+        today = datetime.combine(date.today(), datetime_time.min, tzinfo=UTC)
         with SessionLocal() as session:
             spent = sum(
                 value or 0
@@ -144,7 +153,7 @@ async def create_run(payload: RunCreate, request: Request) -> RunCreated:
                 status_code=402,
                 detail=f"Estimated run cost exceeds the ${DAILY_SPEND_CAP_USD:.2f} daily cap.",
             )
-    run_id, estimate = orchestrator.create(payload)
+    run_id, estimate = orchestrator.create(payload, portfolio=portfolio)
     return RunCreated(run_id=run_id, status="queued", estimated_cost_usd=estimate)
 
 
@@ -245,8 +254,21 @@ async def resume_run(run_id: str) -> RunCreated:
             raise HTTPException(status_code=404, detail="Run not found")
         estimate = run.estimated_cost_usd
     if not orchestrator.resume(run_id):
-        raise HTTPException(status_code=409, detail="Only failed or completed runs can be resumed.")
+        raise HTTPException(status_code=409, detail="Only stopped, failed or completed runs can be resumed.")
     return RunCreated(run_id=run_id, status="queued", estimated_cost_usd=estimate)
+
+
+@router.post("/{run_id}/stop", response_model=RunSummary)
+def stop_run(run_id: str) -> dict:
+    """Stop a running analysis at its next step; a checkpointed run can resume from there."""
+    with SessionLocal() as session:
+        run = session.get(Run, run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+    if not orchestrator.request_stop(run_id):
+        raise HTTPException(status_code=409, detail="Only a queued or running analysis can be stopped.")
+    with SessionLocal() as session:
+        return _serialize_run(session.scalar(_run_query().where(Run.id == run_id)))
 
 
 @router.get("/{run_id}/report.md")
@@ -331,13 +353,13 @@ async def stream_run(websocket: WebSocket, run_id: str) -> None:
                     }
                 )
             current = session.get(Run, run_id)
-            terminal = current.status in {"completed", "failed"}
+            terminal = current.status in TERMINAL_STATUSES
         if terminal:
             return
         while True:
             event = await queue.get()
             await websocket.send_json(event)
-            if event["event_type"] in {"completed", "failed"}:
+            if event["event_type"] in TERMINAL_STATUSES:
                 return
     except WebSocketDisconnect:
         pass

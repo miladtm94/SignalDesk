@@ -20,6 +20,9 @@ EXTRA_SECRET_NAMES = {
     "AWS_PROFILE",
     "OLLAMA_BASE_URL",
     "OPENAI_COMPATIBLE_BASE_URL",
+    # A Claude plan token from `claude setup-token`, for a backend without a
+    # signed-in Claude Code (a container). Only Claude Code ever reads it.
+    "CLAUDE_CODE_OAUTH_TOKEN",
 }
 
 

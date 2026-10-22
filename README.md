@@ -90,6 +90,8 @@ reproducible research outputs.
 | Decision workspace | Read the portfolio decision, research verdict, trading plan, risk debate, and analyst evidence in focused tabs; export the completed report as Markdown. |
 | Persistence and recovery | Store run history, notes, usage, checkpoints, and encrypted provider credentials locally; resume interrupted LangGraph runs without repeating completed work. |
 | Reproducibility | Preserve the exact provider, models, reasoning settings, temperature, debate rounds, and checkpoint state alongside every result. |
+| Claude subscription | Run the whole desk on your own Claude Pro or Max plan through your local Claude Code, with no API key; the CLI, Python and SignalDesk all support it. |
+| Holdings | Keep your current book (positions, average prices, cash) and have the trader, risk analysts and portfolio manager decide against it, with the exact book recorded on each run. |
 
 ### Configure a research run
 
@@ -117,6 +119,15 @@ to a single rating.
 
 <p align="center">
   <img src="screenshots/DecisionWindow-SignalDesk.png" alt="SignalDesk completed portfolio decision with reproducibility record and notebook" width="100%">
+</p>
+
+### Decide against your book
+
+Save what you hold once; any run can then size against it. The page
+shows exactly what the decision agents will read for each ticker.
+
+<p align="center">
+  <img src="screenshots/Holdings-SignalDesk.png" alt="SignalDesk holdings with live prices and the portfolio context the agents read" width="100%">
 </p>
 
 ### Run SignalDesk locally
@@ -401,6 +412,8 @@ _, decision = ta.propagate("NVDA", "2026-09-01", portfolio=portfolio)
 The CLI takes the same content as a JSON file: `tradingagents --portfolio my_book.json`.
 
 An empty `positions` list means a flat book, which is different from passing nothing. A run without a portfolio is never treated as flat.
+
+In SignalDesk, the Holdings page keeps the book (it is validated as a `PortfolioContext`), and the analysis form offers "Decide against my book". Each run records the exact book it was given, so later edits never change a past result.
 
 ## Persistence and Recovery
 

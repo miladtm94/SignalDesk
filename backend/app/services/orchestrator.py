@@ -7,12 +7,12 @@ import shutil
 import threading
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
 
-from backend.adapters.tradingagents_adapter import SectionEvent, run_streaming_analysis
+from backend.adapters.tradingagents_adapter import RunStopped, SectionEvent, run_streaming_analysis
 
 from ..database import SessionLocal
 from ..models import Decision, Run, RunEvent, RunSection, Usage
@@ -21,6 +21,9 @@ from ..settings import REPORTS_DIR, RUN_HEARTBEAT_SECONDS
 from .costs import actual_usage_cost, estimate_run_cost
 
 logger = logging.getLogger(__name__)
+
+# A run in one of these states has finished; stopped and failed runs can resume.
+TERMINAL_STATUSES = frozenset({"completed", "failed", "stopped"})
 
 
 class RunBroadcaster:
@@ -56,8 +59,10 @@ class RunOrchestrator:
         self._tasks: set[asyncio.Task[None]] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._run_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+        self._stop_requests: set[str] = set()
+        self._stop_lock = threading.Lock()
 
-    def create(self, payload: RunCreate) -> tuple[str, float]:
+    def create(self, payload: RunCreate, portfolio: dict[str, Any] | None = None) -> tuple[str, float]:
         estimate = estimate_run_cost(
             provider=payload.llm_provider,
             quick_model=payload.quick_think_llm,
@@ -87,6 +92,7 @@ class RunOrchestrator:
                     benchmark_ticker=payload.benchmark_ticker,
                     config_snapshot=config_snapshot,
                     estimated_cost_usd=estimate,
+                    portfolio_snapshot=portfolio,
                     status="queued",
                 )
             )
@@ -94,13 +100,19 @@ class RunOrchestrator:
         self.start(run_id)
         return run_id, estimate
 
-    def start(self, run_id: str) -> None:
+    def bind_loop(self) -> None:
+        """Publish events on the running loop; call from inside it."""
         self._loop = asyncio.get_running_loop()
-        task = asyncio.create_task(self._run(run_id), name=f"trading-run-{run_id}")
+
+    def start(self, run_id: str) -> None:
+        self.bind_loop()
+        task = asyncio.create_task(self.execute(run_id), name=f"trading-run-{run_id}")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _run(self, run_id: str) -> None:
+    async def execute(self, run_id: str) -> None:
+        """Run one analysis to its end on a worker thread, with heartbeats for live viewers."""
+        self.bind_loop()
         worker = asyncio.create_task(asyncio.to_thread(self._execute_sync, run_id))
         while not worker.done():
             done, _ = await asyncio.wait({worker}, timeout=RUN_HEARTBEAT_SECONDS)
@@ -112,10 +124,24 @@ class RunOrchestrator:
                     "sequence": -1,
                     "event_type": "heartbeat",
                     "payload": {"status": "running"},
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
             )
         await worker
+
+    def request_stop(self, run_id: str) -> bool:
+        """Ask a queued or running run to stop at its next step; False when it is not active."""
+        with SessionLocal() as session:
+            run = session.get(Run, run_id)
+            if run is None or run.status not in {"queued", "running"}:
+                return False
+        with self._stop_lock:
+            self._stop_requests.add(run_id)
+        return True
+
+    def _should_stop(self, run_id: str) -> bool:
+        with self._stop_lock:
+            return run_id in self._stop_requests
 
     def recover_interrupted_runs(self) -> int:
         """Make runs orphaned by a prior backend process safely resumable."""
@@ -131,7 +157,7 @@ class RunOrchestrator:
             for run in rows:
                 run.status = "failed"
                 run.error_message = message
-                run.completed_at = datetime.now(timezone.utc)
+                run.completed_at = datetime.now(UTC)
         for run_id in run_ids:
             self._record_and_publish(
                 run_id,
@@ -151,8 +177,8 @@ class RunOrchestrator:
                     return
                 run.status = "running"
                 run.error_message = None
-                run.started_at = datetime.now(timezone.utc)
-                payload = {
+                run.started_at = datetime.now(UTC)
+                payload: dict[str, Any] = {
                     "run_id": run.id,
                     "ticker": run.ticker,
                     "trade_date": run.trade_date.isoformat(),
@@ -160,6 +186,7 @@ class RunOrchestrator:
                     "selected_analysts": list(run.selected_analysts),
                     "config_overrides": dict(run.config_snapshot),
                     "report_dir": REPORTS_DIR / run.id,
+                    "portfolio": run.portfolio_snapshot,
                 }
             self._record_and_publish(run_id, "status", {"status": "running"})
 
@@ -167,6 +194,7 @@ class RunOrchestrator:
                 **payload,
                 on_section=lambda event, usage: self._on_section(run_id, event, usage),
                 on_status=lambda event_type, data: self._record_and_publish(run_id, event_type, data),
+                should_stop=lambda: self._should_stop(run_id),
             )
 
             with SessionLocal.begin() as session:
@@ -177,7 +205,7 @@ class RunOrchestrator:
                 if usage:
                     self._apply_usage(usage, run, result.usage)
                 run.status = "completed"
-                run.completed_at = datetime.now(timezone.utc)
+                run.completed_at = datetime.now(UTC)
                 run.report_path = str(result.report_path)
                 decision = session.get(Decision, run_id) or Decision(run_id=run_id)
                 decision.rating = result.decision
@@ -189,6 +217,20 @@ class RunOrchestrator:
                 "completed",
                 {"status": "completed", "rating": result.decision, "degraded_streaming": result.degraded_streaming},
             )
+        except RunStopped:
+            with SessionLocal.begin() as session:
+                run = session.get(Run, run_id)
+                checkpointed = bool(run and run.checkpoint_enabled)
+                message = (
+                    "Stopped on request. Resume to continue from its saved checkpoint."
+                    if checkpointed
+                    else "Stopped on request. Resume to run it again."
+                )
+                if run:
+                    run.status = "stopped"
+                    run.error_message = message
+                    run.completed_at = datetime.now(UTC)
+            self._record_and_publish(run_id, "stopped", {"status": "stopped", "message": message})
         except Exception as exc:
             logger.exception("TradingAgents run %s failed", run_id)
             message = self._failure_message(exc)
@@ -197,9 +239,11 @@ class RunOrchestrator:
                 if run:
                     run.status = "failed"
                     run.error_message = message
-                    run.completed_at = datetime.now(timezone.utc)
+                    run.completed_at = datetime.now(UTC)
             self._record_and_publish(run_id, "failed", {"status": "failed", "message": message})
         finally:
+            with self._stop_lock:
+                self._stop_requests.discard(run_id)
             lock.release()
 
     @staticmethod
@@ -213,7 +257,7 @@ class RunOrchestrator:
             )
         return raw[:4000]
 
-    def _on_section(self, run_id: str, event: SectionEvent, usage_snapshot: dict[str, int]) -> None:
+    def _on_section(self, run_id: str, event: SectionEvent, usage_snapshot: dict[str, Any]) -> None:
         with SessionLocal.begin() as session:
             run = session.get(Run, run_id)
             if run is None:
@@ -249,7 +293,7 @@ class RunOrchestrator:
         )
 
     @staticmethod
-    def _apply_usage(usage: Usage, run: Run, snapshot: dict[str, int]) -> None:
+    def _apply_usage(usage: Usage, run: Run, snapshot: dict[str, Any]) -> None:
         usage.llm_calls = snapshot.get("llm_calls", 0)
         usage.tool_calls = snapshot.get("tool_calls", 0)
         usage.tokens_in = snapshot.get("tokens_in", 0)
@@ -261,6 +305,7 @@ class RunOrchestrator:
             tokens_in=usage.tokens_in,
             tokens_out=usage.tokens_out,
         )
+        usage.api_equivalent_usd = snapshot.get("api_equivalent_usd") or None
 
     @staticmethod
     def _hydrate_structured_decision(session, run_id: str, decision: Decision) -> None:
@@ -302,7 +347,7 @@ class RunOrchestrator:
     def resume(self, run_id: str) -> bool:
         with SessionLocal.begin() as session:
             run = session.get(Run, run_id)
-            if run is None or run.status not in {"failed", "completed"}:
+            if run is None or run.status not in TERMINAL_STATUSES:
                 return False
             run.status = "queued"
             run.error_message = None

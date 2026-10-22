@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -22,7 +22,7 @@ from .database import Base
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Run(Base):
@@ -55,6 +55,9 @@ class Run(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The book the decision agents saw, exactly as launched; None means the run
+    # had no portfolio context (which is not the same as a flat book).
+    portfolio_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     sections: Mapped[list[RunSection]] = relationship(cascade="all, delete-orphan", back_populates="run")
     decision: Mapped[Decision | None] = relationship(cascade="all, delete-orphan", back_populates="run", uselist=False)
@@ -105,6 +108,9 @@ class Usage(Base):
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0)
+    # For a run billed to a Claude plan: what its tokens would cost at API list
+    # prices, as Claude Code reports it. The plan itself bills nothing per call.
+    api_equivalent_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="usage")
 

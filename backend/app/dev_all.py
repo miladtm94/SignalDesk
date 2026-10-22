@@ -17,7 +17,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "frontend"
 BACKEND_HEALTH_URL = f"http://{HOST}:{PORT}/api/health"
 FRONTEND_HOST = "127.0.0.1"
-FRONTEND_PORT = 5174
+FRONTEND_PORT = int(os.getenv("TRADING_CONSOLE_FRONTEND_PORT", "5174") or 5174)
 FRONTEND_URL = f"http://{FRONTEND_HOST}:{FRONTEND_PORT}"
 STARTUP_TIMEOUT_SECONDS = 30
 
@@ -38,7 +38,13 @@ def _http_ready(url: str, *, backend: bool = False) -> bool:
 
 
 def _start(command: list[str], cwd: Path) -> subprocess.Popen:
-    environment = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    # The frontend dev server proxies /api to this backend, wherever it listens.
+    environment = {
+        **os.environ,
+        "PYTHONUNBUFFERED": "1",
+        "TRADING_CONSOLE_API_URL": f"http://{HOST}:{PORT}",
+        "TRADING_CONSOLE_FRONTEND_PORT": str(FRONTEND_PORT),
+    }
     return subprocess.Popen(
         command,
         cwd=cwd,

@@ -6,16 +6,25 @@ from ..database import SessionLocal
 from ..models import AppPreference
 from ..schemas import PreferencesWrite, SecretMask, SecretWrite
 from ..services.costs import public_cost_table
-from ..services.providers import get_provider_configuration, get_vendor_configuration
+from ..services.providers import get_provider_configuration, get_vendor_configuration, plan_status
 from ..services.secrets import secret_store
 from ..settings import DATA_DIR
 
 router = APIRouter(prefix="/api/config", tags=["configuration"])
+PLAN_PROVIDERS = {"claude", "chatgpt"}
 
 
 @router.get("/providers")
-def providers():
-    return get_provider_configuration()
+def providers(fresh: bool = False):
+    return get_provider_configuration(fresh=fresh)
+
+
+@router.get("/subscriptions/{provider}")
+def subscription(provider: str, fresh: bool = True):
+    """Whether a plan provider is ready: Claude Code's sign-in, or the ChatGPT sign-in."""
+    if provider not in PLAN_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Not a plan provider")
+    return plan_status(provider, fresh=fresh)
 
 
 @router.get("/vendors")

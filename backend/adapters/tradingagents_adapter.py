@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,21 +20,33 @@ from typing import Any
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS
+from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS, RESULTS_DIR
 from tradingagents.agents.rating import run_rating
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph import trading_graph as _trading_graph
 from tradingagents.graph.trading_graph import TradingAgentsGraph
-from tradingagents.llm_clients import create_tier_client as _create_tier_client
+from tradingagents.llm_clients import (
+    claude_code,
+    create_tier_client as _create_tier_client,
+    tier_provider,
+)
 from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
 from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
 from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
+from tradingagents.portfolio import PortfolioContext
 
 logger = logging.getLogger(__name__)
+
+# Providers billed to the person's own plan rather than per token.
+PLAN_PROVIDERS = frozenset({"claude", "chatgpt"})
+
+
+class RunStopped(Exception):
+    """The run was stopped on request between two of its steps."""
 
 
 def _console_tier_client(config: dict[str, Any], tier: str, **extra: Any):
@@ -45,6 +58,10 @@ def _console_tier_client(config: dict[str, Any], tier: str, **extra: Any):
     """
     timeout = config.get("llm_timeout")
     if timeout is not None:
+        # A Claude plan call is one Claude Code process, so its timeout covers the
+        # whole answer, not one read of a stream: never cut it below upstream's.
+        if tier_provider(config, tier) == claude_code.PROVIDER:
+            timeout = max(float(timeout), claude_code.DEFAULT_TIMEOUT)
         extra.setdefault("timeout", float(timeout))
     return _create_tier_client(config, tier, **extra)
 
@@ -73,6 +90,22 @@ _REASONING_CONTROLS: dict[str, dict[str, Any]] = {
         "label": "Reasoning effort",
         "levels": ["low", "medium", "high"],
         "default": "high",
+    },
+    # The Claude plan takes the same setting through Claude Code's --effort; on a
+    # plan, effort spends usage limits rather than money, so medium is suggested.
+    "claude": {
+        "config_key": "anthropic_effort",
+        "env_var": "TRADINGAGENTS_ANTHROPIC_EFFORT",
+        "label": "Reasoning effort",
+        "levels": ["low", "medium", "high", "xhigh", "max"],
+        "default": "medium",
+    },
+    "chatgpt": {
+        "config_key": "openai_reasoning_effort",
+        "env_var": "TRADINGAGENTS_OPENAI_REASONING_EFFORT",
+        "label": "Reasoning effort",
+        "levels": ["low", "medium", "high"],
+        "default": "medium",
     },
 }
 
@@ -150,6 +183,8 @@ class StatsCallbackHandler(BaseCallbackHandler):
         self.tool_calls = 0
         self.tokens_in = 0
         self.tokens_out = 0
+        # Reported by plan-billed calls (Claude Code): the same tokens at API prices.
+        self.api_equivalent_usd = 0.0
 
     def on_llm_start(self, serialized, prompts, **kwargs) -> None:
         with self._lock:
@@ -166,22 +201,27 @@ class StatsCallbackHandler(BaseCallbackHandler):
             return
         message = getattr(generation, "message", None)
         usage = getattr(message, "usage_metadata", None) if isinstance(message, AIMessage) else None
-        if usage:
-            with self._lock:
+        metadata = getattr(message, "response_metadata", None) or {}
+        notional = metadata.get("api_equivalent_cost_usd")
+        with self._lock:
+            if usage:
                 self.tokens_in += int(usage.get("input_tokens", 0))
                 self.tokens_out += int(usage.get("output_tokens", 0))
+            if isinstance(notional, (int, float)):
+                self.api_equivalent_usd += float(notional)
 
     def on_tool_start(self, serialized, input_str, **kwargs) -> None:
         with self._lock:
             self.tool_calls += 1
 
-    def snapshot(self) -> dict[str, int]:
+    def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "llm_calls": self.llm_calls,
                 "tool_calls": self.tool_calls,
                 "tokens_in": self.tokens_in,
                 "tokens_out": self.tokens_out,
+                "api_equivalent_usd": round(self.api_equivalent_usd, 6),
             }
 
 
@@ -297,7 +337,11 @@ def _extract_section_events(state: dict[str, Any]) -> list[SectionEvent]:
     return events
 
 
-def _build_config(config_overrides: dict[str, Any], results_dir: Path) -> dict[str, Any]:
+def _build_config(
+    config_overrides: dict[str, Any],
+    results_dir: Path,
+    memory_log_path: Path | None = None,
+) -> dict[str, Any]:
     config = copy.deepcopy(DEFAULT_CONFIG)
     allowed = {
         "llm_provider",
@@ -323,10 +367,40 @@ def _build_config(config_overrides: dict[str, Any], results_dir: Path) -> dict[s
             if key in allowed and value is not None
         }
     )
-    config["results_dir"] = str(results_dir.parent)
+    # Upstream writes each run's JSON state log under results_dir; the report
+    # tree itself goes to the run's own report directory.
+    config["results_dir"] = str(results_dir)
+    if memory_log_path is not None:
+        config["memory_log_path"] = str(memory_log_path)
     config["llm_timeout"] = LLM_REQUEST_TIMEOUT_SECONDS
     config["llm_max_retries"] = LLM_MAX_RETRIES
     return config
+
+
+# --- the caller's book --------------------------------------------------------------
+
+
+def normalize_portfolio(data: dict[str, Any]) -> dict[str, Any]:
+    """The book as upstream reads it; raises ValueError naming what is wrong."""
+    try:
+        return PortfolioContext.model_validate(data).model_dump(mode="json")
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from None
+
+
+def _portfolio(snapshot: dict[str, Any] | None) -> PortfolioContext | None:
+    # None is "no portfolio context", which upstream keeps distinct from a flat
+    # book (a snapshot whose positions list is empty).
+    return None if snapshot is None else PortfolioContext.model_validate(snapshot)
+
+
+def portfolio_context(snapshot: dict[str, Any] | None, ticker: str) -> str | None:
+    """The portfolio block the trader, risk analysts and portfolio manager read."""
+    book = _portfolio(snapshot)
+    return book.render(ticker) if book is not None else None
+
+
+# --- one analysis -------------------------------------------------------------------
 
 
 def run_streaming_analysis(
@@ -338,12 +412,23 @@ def run_streaming_analysis(
     selected_analysts: list[str],
     config_overrides: dict[str, Any],
     report_dir: Path,
-    on_section: Callable[[SectionEvent, dict[str, int]], None],
+    on_section: Callable[[SectionEvent, dict[str, Any]], None],
     on_status: Callable[[str, dict[str, Any]], None],
+    portfolio: dict[str, Any] | None = None,
+    results_dir: Path | None = None,
+    memory_log_path: Path | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> AdapterResult:
-    """Execute TradingAgents with accumulated-state streaming and safe fallback."""
+    """Execute TradingAgents with accumulated-state streaming and safe fallback.
+
+    ``portfolio`` is the saved book the decision agents work against (None for
+    none). ``results_dir`` and ``memory_log_path`` move the run's state log and
+    memory log. ``should_stop`` is polled between graph steps; when it
+    returns True the run raises ``RunStopped``, keeping any checkpoint.
+    """
     report_dir.mkdir(parents=True, exist_ok=True)
-    config = _build_config(config_overrides, report_dir)
+    config = _build_config(config_overrides, results_dir or RESULTS_DIR, memory_log_path)
+    book = _portfolio(portfolio)
     stats = StatsCallbackHandler()
     seen: dict[str, tuple[str, dict[str, Any] | None]] = {}
     graph: ConsoleTradingAgentsGraph | None = None
@@ -356,16 +441,21 @@ def run_streaming_analysis(
                 seen[event.section_key] = signature
                 on_section(event, stats.snapshot())
 
+    def check_stop() -> None:
+        if should_stop is not None and should_stop():
+            raise RunStopped()
+
     try:
+        check_stop()
         graph = ConsoleTradingAgentsGraph(
             selected_analysts=selected_analysts,
             debug=False,
             config=config,
             callbacks=[stats],
         )
-        init_state = graph.create_run_state(ticker, trade_date, asset_type)
+        init_state = graph.create_run_state(ticker, trade_date, asset_type, book)
         args = graph.propagator.get_graph_args(callbacks=[stats])
-        checkpoint_tid = graph.begin_checkpoint(ticker, trade_date, asset_type)
+        checkpoint_tid = graph.begin_checkpoint(ticker, trade_date, asset_type, book)
         checkpoint_started = True
         if checkpoint_tid is not None:
             args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = checkpoint_tid
@@ -375,6 +465,7 @@ def run_streaming_analysis(
         # does so a report appears the moment its analyst finishes.
         final_state: dict[str, Any] = {}
         for _messages, chunk in graph.stream_run(graph.checkpoint_input(init_state), **args):
+            check_stop()
             if chunk is None:
                 continue
             final_state.update(chunk)
@@ -384,7 +475,7 @@ def run_streaming_analysis(
 
         # record_decision writes the state log as well as the memory log entry.
         graph.record_decision(ticker, trade_date, final_state)
-        graph.clear_checkpoint_on_success(ticker, trade_date, asset_type)
+        graph.clear_checkpoint_on_success(ticker, trade_date, asset_type, book)
         decision = run_rating(final_state)
         report_path = graph.save_reports(final_state, ticker, save_path=report_dir)
         return AdapterResult(final_state, decision, stats.snapshot(), report_path)
@@ -415,10 +506,82 @@ def run_streaming_analysis(
             config=config,
             callbacks=[stats],
         )
-        final_state, decision = fallback.propagate(ticker, trade_date, asset_type=asset_type)
+        final_state, decision = fallback.propagate(
+            ticker, trade_date, asset_type=asset_type, portfolio=book
+        )
         emit_changed(final_state)
         report_path = fallback.save_reports(final_state, ticker, save_path=report_dir)
         return AdapterResult(final_state, decision, stats.snapshot(), report_path, degraded_streaming=True)
     finally:
         if graph is not None and checkpoint_started:
             graph.end_checkpoint()
+
+
+# --- plan-billed providers ----------------------------------------------------------
+
+
+def _masked_account(email: str | None) -> str | None:
+    if not email or "@" not in email:
+        return email
+    name, _, domain = email.partition("@")
+    return f"{name[:1]}•••@{domain}"
+
+
+def claude_plan_status(fresh: bool = False) -> dict[str, Any]:
+    """Whether Claude Code on this machine can run analyses on a Claude plan.
+
+    The console never sees the plan credential: it asks Claude Code. A plan
+    token in ``CLAUDE_CODE_OAUTH_TOKEN`` (from ``claude setup-token``, for a
+    container) counts as signed in, as it does for the provider itself.
+    """
+    login = "tradingagents login claude"
+    try:
+        cli = claude_code.find_cli()
+    except claude_code.ClaudeCodeError as exc:
+        return {"ready": False, "installed": False, "message": str(exc), "login_command": login}
+    version = claude_code.cli_version(cli)
+    base = {
+        "installed": True,
+        "cli_path": cli,
+        "version": ".".join(str(part) for part in version) if version else None,
+        "login_command": login,
+        "token_env": claude_code.TOKEN_ENV,
+    }
+    try:
+        claude_code.ensure_supported(cli)
+    except claude_code.ClaudeCodeError as exc:
+        return {**base, "ready": False, "message": str(exc)}
+    token = bool(os.environ.get(claude_code.TOKEN_ENV))
+    status = claude_code.auth_status(cli, fresh=fresh)
+    signed_in = claude_code.on_plan(status)
+    if signed_in:
+        message = f"Signed in to a Claude {str(status.get('subscriptionType') or '').title()} plan".replace("  ", " ")
+    elif token:
+        message = f"Using the plan token in {claude_code.TOKEN_ENV}"
+    elif status.get("loggedIn"):
+        message = "Claude Code is signed in to Anthropic API billing, not a Claude plan."
+    else:
+        message = "Claude Code is not signed in to a Claude plan."
+    return {
+        **base,
+        "ready": signed_in or token,
+        "signed_in": signed_in,
+        "token": token,
+        "account": _masked_account(status.get("email")),
+        "plan": status.get("subscriptionType"),
+        "message": message,
+    }
+
+
+def chatgpt_plan_status() -> dict[str, Any]:
+    """Whether this machine is signed in to a ChatGPT plan (``tradingagents login chatgpt``)."""
+    from tradingagents.llm_clients import chatgpt_auth
+
+    email = chatgpt_auth.signed_in_as()
+    return {
+        "ready": email is not None,
+        "installed": True,
+        "account": _masked_account(email),
+        "login_command": "tradingagents login chatgpt",
+        "message": "Signed in to a ChatGPT plan" if email else "Not signed in to a ChatGPT plan.",
+    }

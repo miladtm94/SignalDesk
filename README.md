@@ -155,6 +155,9 @@ Open `http://127.0.0.1:4173`. The services bind to loopback, credentials stay
 on the local machine, completed reports are written under `./reports/`, and the
 database/checkpoints remain in the `research_console_data` Docker volume.
 
+To run on your Claude plan inside Docker, see `docs/TESTING.md`, which walks
+through every new feature step by step from a terminal or with Docker.
+
 Our framework decomposes complex trading tasks into specialized roles.
 
 ### Analyst Team

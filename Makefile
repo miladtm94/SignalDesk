@@ -18,9 +18,10 @@ install: venv
 	$(PYTHON) -m pip install -e ".[dev]"
 
 # Claude Code, bundled by the Agent SDK, for the Claude plan provider on a
-# machine that has no Claude Code installed.
+# machine that has no Claude Code installed. Resolved together with the console's
+# pins: on its own, the SDK's mcp dependency upgrades Starlette past FastAPI's range.
 install-claude: venv
-	$(PYTHON) -m pip install -e ".[claude]"
+	$(PYTHON) -m pip install -e ".[dev,claude]" -r backend/requirements-dev.txt
 
 # Sign Claude Code in to your Claude Pro or Max plan (Claude Code's own login).
 login-claude:

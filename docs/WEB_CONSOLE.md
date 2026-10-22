@@ -49,7 +49,9 @@ records what its tokens would have cost at API list prices.
   Sign in once in a terminal on that machine with `tradingagents login claude`
   (or `make login-claude`), then press "Check again". `TRADINGAGENTS_CLAUDE_CLI`
   names the executable when it is not on PATH; editors' bundled copies and the
-  Agent SDK's (`make install-claude`) are found automatically.
+  Agent SDK's (`make install-claude`) are found automatically. Install the SDK
+  only through that target: on its own, `pip install ".[claude]"` lets its `mcp`
+  dependency upgrade Starlette past what the console's pinned FastAPI supports.
 - **In Docker.** Build with `WITH_CLAUDE_CODE=1 docker compose build web-backend`
   to add Claude Code to the image, run `claude setup-token` on a machine where you
   can sign in, and save the token in Settings → Provider credentials as

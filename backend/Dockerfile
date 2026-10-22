@@ -10,9 +10,11 @@ COPY backend/requirements.txt /tmp/requirements.txt
 COPY . /app
 # WITH_CLAUDE_CODE=1 adds Claude Code for the Claude plan provider; sign it in
 # with a CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` (Settings, or .env).
+# One pip resolution: installed on its own, the Agent SDK's mcp dependency would
+# upgrade Starlette past what the pinned FastAPI supports.
 ARG WITH_CLAUDE_CODE=0
-RUN pip install --no-cache-dir . -r /tmp/requirements.txt \
- && if [ "$WITH_CLAUDE_CODE" = "1" ]; then pip install --no-cache-dir ".[claude]"; fi
+RUN extra=""; if [ "$WITH_CLAUDE_CODE" = "1" ]; then extra="[claude]"; fi \
+ && pip install --no-cache-dir ".${extra}" -r /tmp/requirements.txt
 
 RUN useradd --create-home console \
  && mkdir -p /app/backend/data \

@@ -42,6 +42,7 @@ Expect merge conflicts here; keep both sides.
 | `cli/selections.py` | The effort question for `claude` |
 | `tests/test_chatgpt_provider.py`, `tests/test_cli_commands.py` | The Subscription submenu lists Claude; `claude` is now a valid plan, so the invalid-plan example is `gemini` |
 | `tradingagents/output_languages.py` | Shared CLI/console language list (fork-owned file) |
+| `tradingagents/dataflows/vendors/yahoo/common.py` | `hide_yfinance_inplace_deprecations()`: silences pandas 3.1's `inplace` deprecation raised inside yfinance 1.7.0; drop it once yfinance stops using `inplace` |
 | `pyproject.toml` | The `claude` extra (Agent SDK's bundled Claude Code) |
 | `Dockerfile`, `docker-compose.yml` | `WITH_CLAUDE_CODE` build arg, `CLAUDE_CONFIG_DIR`, console services |
 | `README.md`, `.env.example`, `Makefile` | Fork documentation and targets |

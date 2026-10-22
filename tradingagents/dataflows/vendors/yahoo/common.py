@@ -2,12 +2,28 @@
 
 import logging
 import time
+import warnings
 
 import yfinance as yf
 from yfinance.exceptions import YFPricesMissingError, YFRateLimitError
 
 from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
 from tradingagents.dataflows.net import vendor_reachable
+
+
+def hide_yfinance_inplace_deprecations() -> None:
+    """Hide pandas' inplace deprecation when yfinance raises it, and only then.
+
+    yfinance (1.7.0, the latest) still calls pandas with inplace=True, which pandas
+    3.1 deprecates (PDEP-8), so every price fetch printed a Pandas4Warning. Called
+    after yfinance's import on purpose: yfinance re-enables its own
+    DeprecationWarnings there, and the filter added last wins. Drop it once
+    yfinance stops using inplace.
+    """
+    warnings.filterwarnings("ignore", message=r"The inplace keyword", module=r"yfinance(\.|$)")
+
+
+hide_yfinance_inplace_deprecations()
 
 logger = logging.getLogger(__name__)
 

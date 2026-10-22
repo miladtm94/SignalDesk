@@ -39,6 +39,9 @@ Verify an item still applies before acting on it; strike it here when fixed.
     process groups); an in-container `tradingagents login claude` (the token
     route is the documented one).
 12. Three macOS-only failures in upstream's `tests/test_cache_writes.py`.
+13. yfinance 1.7.0 still uses pandas `inplace=True`; the `Pandas4Warning`s are hidden by
+    `yahoo/common.hide_yfinance_inplace_deprecations()`. Remove it after a yfinance
+    release that stops using `inplace` (check `pip index versions yfinance`).
 
 ## Ranked ideas
 

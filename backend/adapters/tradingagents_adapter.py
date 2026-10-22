@@ -22,15 +22,34 @@ from langchain_core.outputs import LLMResult
 from pydantic import BaseModel
 
 from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS
-from tradingagents.dataflows.stockstats_utils import load_ohlcv
-from tradingagents.dataflows.symbol_utils import normalize_symbol
+from tradingagents.agents.rating import run_rating
+from tradingagents.dataflows.symbols import normalize_symbol
+from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.graph import trading_graph as _trading_graph
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.llm_clients import create_tier_client as _create_tier_client
 from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
 from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
 from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
 
 logger = logging.getLogger(__name__)
+
+
+def _console_tier_client(config: dict[str, Any], tier: str, **extra: Any):
+    """Upstream's tier client, with the console's request timeout when one is set.
+
+    v0.6 builds each tier's client inside ``TradingAgentsGraph.__init__`` and no
+    longer exposes a provider-kwargs hook, so the console's ``llm_timeout`` is
+    applied here. Graphs built without that key are unaffected.
+    """
+    timeout = config.get("llm_timeout")
+    if timeout is not None:
+        extra.setdefault("timeout", float(timeout))
+    return _create_tier_client(config, tier, **extra)
+
+
+_trading_graph.create_tier_client = _console_tier_client
 
 
 _REASONING_CONTROLS: dict[str, dict[str, Any]] = {
@@ -77,14 +96,7 @@ def _reasoning_control(provider: str, model: str) -> dict[str, Any] | None:
 
 
 class ConsoleTradingAgentsGraph(TradingAgentsGraph):
-    """Apply web-console reliability limits without changing upstream code."""
-
-    def _get_provider_kwargs(self) -> dict[str, Any]:
-        kwargs = super()._get_provider_kwargs()
-        timeout = self.config.get("llm_timeout")
-        if timeout is not None:
-            kwargs["timeout"] = float(timeout)
-        return kwargs
+    """The upstream graph as the console runs it; see ``_console_tier_client``."""
 
 
 @dataclass(frozen=True)
@@ -247,48 +259,41 @@ def _jsonable(value: Any) -> dict[str, Any] | None:
     return None
 
 
+# UI section -> (state container, key), in pipeline order. Since v0.5.2 each
+# decision has one name in the state: the Research Manager's is
+# ``investment_plan`` and the Portfolio Manager's ``final_trade_decision``; the
+# debate states no longer carry a ``judge_decision`` copy.
+_SECTION_SOURCES: tuple[tuple[str, str | None, str], ...] = (
+    ("market_report", None, "market_report"),
+    ("sentiment_report", None, "sentiment_report"),
+    ("news_report", None, "news_report"),
+    ("fundamentals_report", None, "fundamentals_report"),
+    ("bull", "investment_debate_state", "bull_history"),
+    ("bear", "investment_debate_state", "bear_history"),
+    ("research_manager", None, "investment_plan"),
+    ("trader", None, "trader_investment_plan"),
+    ("risk_aggressive", "risk_debate_state", "aggressive_history"),
+    ("risk_conservative", "risk_debate_state", "conservative_history"),
+    ("risk_neutral", "risk_debate_state", "neutral_history"),
+    ("portfolio_manager", None, "final_trade_decision"),
+)
+
+
 def _extract_section_events(state: dict[str, Any]) -> list[SectionEvent]:
     """Map accumulated LangGraph state to UI sections.
 
-    Current v0.5.0 renders typed decisions back to markdown before placing them
-    in state. We intentionally do not regex those documents. If an upstream
+    Upstream renders typed decisions back to markdown before placing them in
+    state. We intentionally do not regex those documents. If an upstream
     release exposes its Pydantic value alongside the rendered text, this helper
     will persist it through the conventional ``*_structured`` keys.
     """
     events: list[SectionEvent] = []
-    direct = {
-        "market_report": "market_report",
-        "sentiment_report": "sentiment_report",
-        "news_report": "news_report",
-        "fundamentals_report": "fundamentals_report",
-        "trader": "trader_investment_plan",
-    }
-    for section_key, state_key in direct.items():
-        content = state.get(state_key)
+    for section_key, container, key in _SECTION_SOURCES:
+        source = (state.get(container) or {}) if container else state
+        content = source.get(key)
         if content:
-            structured = _jsonable(content) or _jsonable(state.get(f"{state_key}_structured"))
+            structured = _jsonable(content) or _jsonable(source.get(f"{key}_structured"))
             events.append(SectionEvent(section_key, str(content), structured))
-
-    debate = state.get("investment_debate_state") or {}
-    for section_key, key in (
-        ("bull", "bull_history"),
-        ("bear", "bear_history"),
-        ("research_manager", "judge_decision"),
-    ):
-        if debate.get(key):
-            structured = _jsonable(debate[key]) or _jsonable(debate.get(f"{key}_structured"))
-            events.append(SectionEvent(section_key, str(debate[key]), structured))
-
-    risk = state.get("risk_debate_state") or {}
-    for section_key, key in (
-        ("risk_aggressive", "aggressive_history"),
-        ("risk_conservative", "conservative_history"),
-        ("risk_neutral", "neutral_history"),
-        ("portfolio_manager", "judge_decision"),
-    ):
-        if risk.get(key):
-            structured = _jsonable(risk[key]) or _jsonable(risk.get(f"{key}_structured"))
-            events.append(SectionEvent(section_key, str(risk[key]), structured))
     return events
 
 
@@ -358,7 +363,6 @@ def run_streaming_analysis(
             config=config,
             callbacks=[stats],
         )
-        graph.ticker = ticker
         init_state = graph.create_run_state(ticker, trade_date, asset_type)
         args = graph.propagator.get_graph_args(callbacks=[stats])
         checkpoint_tid = graph.begin_checkpoint(ticker, trade_date, asset_type)
@@ -366,18 +370,22 @@ def run_streaming_analysis(
         if checkpoint_tid is not None:
             args.setdefault("config", {}).setdefault("configurable", {})["thread_id"] = checkpoint_tid
 
-        final_state: dict[str, Any] | None = None
-        for chunk in graph.graph.stream(graph.checkpoint_input(init_state), **args):
-            final_state = chunk
-            emit_changed(chunk)
-        if final_state is None:
-            raise RuntimeError("TradingAgents completed without returning state")
+        # stream_run yields whole top-level states and, as each parallel analyst
+        # files its report, that analyst's report alone. Merge them as the CLI
+        # does so a report appears the moment its analyst finishes.
+        final_state: dict[str, Any] = {}
+        for _messages, chunk in graph.stream_run(graph.checkpoint_input(init_state), **args):
+            if chunk is None:
+                continue
+            final_state.update(chunk)
+            emit_changed(final_state)
+        if not final_state.get("final_trade_decision"):
+            raise RuntimeError("TradingAgents completed without returning a final decision")
 
-        graph.curr_state = final_state
-        graph._log_state(trade_date, final_state)
+        # record_decision writes the state log as well as the memory log entry.
         graph.record_decision(ticker, trade_date, final_state)
         graph.clear_checkpoint_on_success(ticker, trade_date, asset_type)
-        decision = graph.process_signal(final_state["final_trade_decision"])
+        decision = run_rating(final_state)
         report_path = graph.save_reports(final_state, ticker, save_path=report_dir)
         return AdapterResult(final_state, decision, stats.snapshot(), report_path)
     except Exception as streaming_error:

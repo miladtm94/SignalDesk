@@ -24,27 +24,28 @@ class Propagator:
         return {"stream_mode": "values", "config": {"callbacks": callbacks}}
 
 
-class Stream:
-    def stream(self, init_state, **kwargs):
-        yield {"market_report": "Market evidence"}
-        yield {
-            "market_report": "Market evidence",
-            "investment_debate_state": {
-                "bull_history": "Bull case",
-                "bear_history": "Bear case",
-                "judge_decision": "Manager call",
-            },
-            "risk_debate_state": {"judge_decision": "**Rating**: Buy"},
-            "final_trade_decision": "**Rating**: Buy",
-        }
+def _stream_run(graph_input, **kwargs):
+    # v0.7 streams (messages, state): an analyst's filed report alone, a step
+    # inside an analyst's graph as None, then whole top-level states.
+    yield [], {"market_report": "Market evidence"}
+    yield ["tool step"], None
+    yield [], {
+        "company_of_interest": "NVDA",
+        "market_report": "Market evidence",
+        "investment_debate_state": {"bull_history": "Bull case", "bear_history": "Bear case"},
+        "investment_plan": "Manager call",
+        "risk_debate_state": {},
+        "final_trade_decision": "**Rating**: Buy",
+        "final_rating": "Buy",
+    }
 
 
 class MockGraph:
     def __init__(self, **kwargs):
         self.memory_log = Memory()
         self.propagator = Propagator()
-        self.graph = Stream()
-        self.workflow = SimpleNamespace(compile=lambda **kwargs: self.graph)
+        self.stream_run = _stream_run
+        self.workflow = SimpleNamespace(compile=lambda **kwargs: None)
         self.config = kwargs["config"]
 
     def create_run_state(self, ticker, trade_date, asset_type):
@@ -70,12 +71,6 @@ class MockGraph:
 
     def clear_checkpoint_on_success(self, ticker, trade_date, asset_type):
         self.checkpoint_cleared = True
-
-    def _log_state(self, trade_date, state):
-        self.logged = state
-
-    def process_signal(self, decision):
-        return "Buy"
 
     def save_reports(self, state, ticker, save_path):
         target = Path(save_path) / "complete_report.md"
@@ -121,10 +116,19 @@ def test_optional_overrides_do_not_erase_upstream_defaults(tmp_path):
     assert config["openai_reasoning_effort"] == "high"
 
 
-def test_console_graph_forwards_request_timeout():
-    graph = adapter.ConsoleTradingAgentsGraph.__new__(adapter.ConsoleTradingAgentsGraph)
-    graph.config = {"llm_provider": "google", "llm_timeout": 45}
-    assert graph._get_provider_kwargs()["timeout"] == 45
+def test_console_tier_clients_get_the_request_timeout(monkeypatch):
+    seen = {}
+
+    def fake_create(config, tier, **extra):
+        seen[tier] = extra
+        return SimpleNamespace(get_llm=lambda: None)
+
+    monkeypatch.setattr(adapter, "_create_tier_client", fake_create)
+    adapter._trading_graph.create_tier_client({"llm_provider": "google", "llm_timeout": 45}, "deep")
+    adapter._trading_graph.create_tier_client({"llm_provider": "google"}, "quick", callbacks=[])
+
+    assert seen["deep"]["timeout"] == 45
+    assert "timeout" not in seen["quick"]
 
 
 def test_google_flash_lite_is_the_console_default():

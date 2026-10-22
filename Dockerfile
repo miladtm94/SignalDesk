@@ -8,7 +8,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /build
 COPY . .
-RUN pip install --no-cache-dir .
+# WITH_CLAUDE_CODE=1 adds the Claude Code executable the claude provider runs (a
+# Claude Pro or Max plan); without it the image stays lean.
+ARG WITH_CLAUDE_CODE=0
+RUN pip install --no-cache-dir . \
+ && if [ "$WITH_CLAUDE_CODE" = "1" ]; then pip install --no-cache-dir ".[claude]"; fi
 
 FROM python:3.13-slim
 

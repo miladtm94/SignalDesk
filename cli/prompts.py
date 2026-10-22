@@ -12,9 +12,14 @@ from rich.markup import escape
 from cli.display import console
 from cli.models import AnalystType, AssetType
 from tradingagents.llm_clients.api_key_env import get_api_key_env
+from tradingagents.llm_clients.claude_code import PROVIDER as CLAUDE_PLAN
 from tradingagents.llm_clients.model_catalog import get_model_options
 from tradingagents.llm_clients.openai_client import OPENAI_COMPATIBLE_PROVIDERS, SIGNED_IN_PROVIDERS
 from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
+
+# Providers used through a personal plan instead of an API key: the ChatGPT plan
+# signs in here, the Claude plan runs through the person's own Claude Code.
+PLAN_PROVIDERS = (*SIGNED_IN_PROVIDERS, CLAUDE_PLAN)
 
 TICKER_INPUT_EXAMPLES = "SPY, 0700.HK, BTC-USD"
 
@@ -384,6 +389,7 @@ def _llm_provider_table() -> list[tuple[str, str, str | None]]:
         ("Google", "google", None),
         ("Anthropic", "anthropic", "https://api.anthropic.com/"),
         ("ChatGPT (Plus or Pro plan)", "chatgpt", "https://api.openai.com/v1"),
+        ("Claude (Pro or Max plan, through Claude Code)", "claude", None),
         ("xAI", "xai", "https://api.x.ai/v1"),
         ("DeepSeek", "deepseek", "https://api.deepseek.com"),
         ("Qwen", "qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
@@ -452,12 +458,13 @@ def select_llm_provider(default=None) -> tuple[str, str | None]:
     base = (default or "").split("-cn")[0]
     choices = []
     for display, provider_key, url in PROVIDERS:
-        if provider_key in SIGNED_IN_PROVIDERS:
+        if provider_key in PLAN_PROVIDERS:
             continue
         choices.append(questionary.Choice(display, value=(provider_key, url)))
         if provider_key == "anthropic":
-            choices.append(questionary.Choice("Subscription (use your ChatGPT plan)", value=_SUBSCRIPTION))
-    preselected = _SUBSCRIPTION if base in SIGNED_IN_PROVIDERS else next(
+            choices.append(questionary.Choice("Subscription (use your ChatGPT or Claude plan)",
+                                              value=_SUBSCRIPTION))
+    preselected = _SUBSCRIPTION if base in PLAN_PROVIDERS else next(
         ((key, url) for _, key, url in PROVIDERS if key == base), None
     )
 
@@ -477,7 +484,7 @@ def select_llm_provider(default=None) -> tuple[str, str | None]:
         choice = questionary.select(
             "Select your subscription:",
             choices=[questionary.Choice(display, value=(key, url))
-                     for display, key, url in PROVIDERS if key in SIGNED_IN_PROVIDERS],
+                     for display, key, url in PROVIDERS if key in PLAN_PROVIDERS],
             style=_MENU_STYLE,
         ).ask()
         if choice is None:
@@ -658,14 +665,46 @@ def confirm_ollama_endpoint(url: str) -> None:
         )
 
 
+def _sign_in_again(plan: str, reason: str) -> None:
+    """Offer the plan's login at a terminal; without one, say how and stop the run."""
+    if not sys.stdin.isatty():
+        console.print(f"[red]{escape(reason)}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(f"\n[yellow]{escape(reason)}[/yellow]")
+    # -P keeps a cli/ package in the working directory from shadowing ours.
+    login = [sys.executable, "-P", "-m", "cli.main", "login", plan]
+    if subprocess.run(login).returncode != 0:
+        raise typer.Exit(code=1) from None
+
+
+def _ensure_claude_plan() -> None:
+    """Make sure Claude Code is installed and signed in to a Claude plan before the run."""
+    from tradingagents.llm_clients import claude_code
+
+    try:
+        claude_code.require_plan()
+    except claude_code.ClaudeSignInError as exc:
+        _sign_in_again(CLAUDE_PLAN, str(exc))
+        claude_code.forget_status()   # the login ran in its own process
+    except claude_code.ClaudeCodeError as exc:   # not installed, or too old
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    who = (f"the plan token in {claude_code.TOKEN_ENV}" if os.environ.get(claude_code.TOKEN_ENV)
+           else claude_code.describe(claude_code.auth_status()))
+    console.print(f"[green]✓ Using your Claude plan through Claude Code:[/green] {escape(who)}")
+
+
 def ensure_signed_in(provider: str) -> None:
     """Make sure a plan provider's sign-in works before the run, offering to sign in now.
 
     Signing in runs as its own process (``tradingagents login chatgpt``), so its
     read of a pasted address ends with it and never takes a later answer."""
+    if provider.lower() == CLAUDE_PLAN:
+        _ensure_claude_plan()
+        return
     if provider.lower() not in SIGNED_IN_PROVIDERS:
         return
-    from tradingagents.llm_clients import chatgpt_auth  # the one signed-in provider
+    from tradingagents.llm_clients import chatgpt_auth  # the one signed-in OpenAI provider
 
     try:
         chatgpt_auth.access_token()

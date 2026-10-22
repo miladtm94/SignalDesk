@@ -3,12 +3,16 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        WITH_CLAUDE_CODE: ${WITH_CLAUDE_CODE:-0}
     env_file:
       - .env
     environment:
       - TRADING_CONSOLE_HOST=0.0.0.0
       - TRADING_CONSOLE_CORS_ORIGINS=http://localhost:4173,http://127.0.0.1:4173
       - TRADING_CONSOLE_REPORTS_DIR=/app/reports
+      # Claude Code keeps its settings (and any sign-in made in the container) here.
+      - CLAUDE_CONFIG_DIR=/app/backend/data/claude-code
     volumes:
       - research_console_data:/app/backend/data
       - ./reports:/app/reports
@@ -27,9 +31,14 @@ services:
     restart: unless-stopped
 
   tradingagents:
-    build: .
+    build:
+      context: .
+      args:
+        WITH_CLAUDE_CODE: ${WITH_CLAUDE_CODE:-0}
     env_file:
       - .env
+    environment:
+      - CLAUDE_CONFIG_DIR=/home/appuser/.tradingagents/claude-code
     volumes:
       - ${TRADINGAGENTS_DATA_DIR:-tradingagents_data}:/home/appuser/.tradingagents
       - ./reports:/home/appuser/app/reports

@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -8,7 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY backend/requirements.txt /tmp/requirements.txt
 COPY . /app
-RUN pip install --no-cache-dir . -r /tmp/requirements.txt
+# WITH_CLAUDE_CODE=1 adds Claude Code for the Claude plan provider; sign it in
+# with a CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` (Settings, or .env).
+ARG WITH_CLAUDE_CODE=0
+RUN pip install --no-cache-dir . -r /tmp/requirements.txt \
+ && if [ "$WITH_CLAUDE_CODE" = "1" ]; then pip install --no-cache-dir ".[claude]"; fi
 
 RUN useradd --create-home console \
  && mkdir -p /app/backend/data \

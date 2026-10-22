@@ -1,3 +1,4 @@
+import os
 import sys
 from enum import StrEnum
 from typing import Annotated
@@ -7,11 +8,10 @@ from rich.markup import escape
 
 from cli.display import console
 from cli.models import AnalystType, AssetType
-from cli.prompts import filter_analysts_for_asset_type, parse_analysts
+from cli.prompts import CLAUDE_PLAN, PLAN_PROVIDERS, filter_analysts_for_asset_type, parse_analysts
 from cli.run import run_analysis
 from tradingagents.backtest import iter_grid, run_backtest, summarize
 from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.llm_clients.openai_client import SIGNED_IN_PROVIDERS
 from tradingagents.portfolio import load_portfolio
 
 # prompt_toolkit's win32 output module is importable only on Windows (it asserts
@@ -161,12 +161,63 @@ def backtest(
 
 
 # The plans `login` and `logout` take: the providers signed in to, not keyed.
-Plan = StrEnum("Plan", {name: name for name in SIGNED_IN_PROVIDERS})
+Plan = StrEnum("Plan", {name: name for name in PLAN_PROVIDERS})
+
+
+def _login_claude(token: bool) -> None:
+    """Sign Claude Code in to a Claude plan with its own login, or print a plan token."""
+    from tradingagents.llm_clients import claude_code
+
+    try:
+        if token:
+            console.print("Claude Code prints a long-lived token for your Claude plan. On the machine or "
+                          f"container that runs TradingAgents, set it as {claude_code.TOKEN_ENV}, in .env.")
+            claude_code.sign_in(setup_token=True)
+            return
+        status = claude_code.auth_status(claude_code.find_cli(), fresh=True)
+        if claude_code.on_plan(status):
+            console.print("[green]Claude Code is already signed in to your Claude plan as "
+                          f"{escape(claude_code.describe(status))}.[/green]")
+            return
+        console.print("TradingAgents runs Claude through your own Claude Code and never sees your Claude "
+                      "sign-in. Claude Code's login opens in your browser.")
+        status = claude_code.sign_in()
+    except claude_code.ClaudeCodeError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(f"[green]Claude Code is signed in to your Claude plan as {escape(claude_code.describe(status))}.[/green]")
+
+
+def _logout_claude() -> None:
+    """Sign Claude Code out, after saying that this ends Claude Code's own sign-in."""
+    from tradingagents.llm_clients import claude_code
+
+    console.print("TradingAgents keeps no Claude sign-in of its own; it uses Claude Code's. Signing out "
+                  "signs Claude Code itself out on this machine.")
+    if sys.stdin.isatty() and not typer.confirm("Sign Claude Code out?", default=False):
+        console.print("Claude Code stays signed in.")
+        return
+    try:
+        signed_out = claude_code.sign_out()
+    except claude_code.ClaudeCodeError as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print("Claude Code is signed out." if signed_out else "[yellow]Claude Code did not sign out.[/yellow]")
+    if os.environ.get(claude_code.TOKEN_ENV):
+        console.print(f"[yellow]{claude_code.TOKEN_ENV} is still set, so runs keep using that plan token "
+                      "until you remove it from your environment or .env.[/yellow]")
 
 
 @app.command()
-def login(plan: Annotated[Plan, typer.Argument(help="The plan to sign in with")]):
-    """Sign in with your ChatGPT Plus or Pro plan, for the chatgpt provider."""
+def login(
+    plan: Annotated[Plan, typer.Argument(help="The plan to sign in with")],
+    token: bool = typer.Option(False, "--token", help="claude only: print a long-lived plan token, for "
+                               "a machine or container without a browser (claude setup-token)"),
+):
+    """Sign in with your ChatGPT Plus or Pro plan, or your Claude Pro or Max plan through Claude Code."""
+    if plan == CLAUDE_PLAN:
+        _login_claude(token)
+        return
     from tradingagents.llm_clients import chatgpt_auth
 
     try:
@@ -181,7 +232,10 @@ def login(plan: Annotated[Plan, typer.Argument(help="The plan to sign in with")]
 
 @app.command()
 def logout(plan: Annotated[Plan, typer.Argument(help="The plan to sign out of")]):
-    """Sign out of your ChatGPT plan: revoke this machine's access and forget it."""
+    """Sign out of your plan: revoke this machine's ChatGPT access, or sign Claude Code out."""
+    if plan == CLAUDE_PLAN:
+        _logout_claude()
+        return
     from tradingagents.llm_clients import chatgpt_auth
 
     outcome = chatgpt_auth.sign_out()

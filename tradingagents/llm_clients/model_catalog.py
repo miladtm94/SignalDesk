@@ -223,6 +223,22 @@ MODEL_OPTIONS: ProviderModeOptions = {
     "bedrock": _CUSTOM_ONLY,
     # The plan's models are listed live from OpenAI once signed in.
     "chatgpt": _CUSTOM_ONLY,
+    # A Claude Pro or Max plan through Claude Code: the current models it serves.
+    # Claude Code also takes its aliases (fable, opus, sonnet, haiku), which move
+    # with each release; a model ID keeps a run's record exact.
+    "claude": {
+        "quick": [
+            ("Claude Sonnet 5.5 - Best speed and intelligence balance", "claude-sonnet-5-5"),
+            ("Claude Haiku 5.5 - Fastest, lightest on plan usage", "claude-haiku-5-5"),
+            ("Custom model ID", "custom"),
+        ],
+        "deep": [
+            ("Claude Opus 5.5 - Frontier reasoning for the decisions", "claude-opus-5-5"),
+            ("Claude Fable 5.1 - Most capable, heaviest on plan usage", "claude-fable-5-1"),
+            ("Claude Sonnet 5.5 - Near-frontier, lighter on plan usage", "claude-sonnet-5-5"),
+            ("Custom model ID", "custom"),
+        ],
+    },
 }
 
 

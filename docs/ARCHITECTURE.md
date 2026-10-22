@@ -6,7 +6,8 @@
 to import `tradingagents`. It owns construction of `TradingAgentsGraph`, the
 streaming path (`stream_run`, which reports each parallel analyst as it files),
 checkpoint setup, section mapping, report saving, the book (`PortfolioContext`),
-plan sign-in status, and compatibility fallback. The console itself changes no upstream behaviour: its timeout is
+backtest dates, outcomes and scores, plan sign-in status, and compatibility
+fallback. The console itself changes no upstream behaviour: its timeout is
 applied by wrapping upstream's tier-client factory, and everything else goes
 through upstream's public lifecycle helpers.
 
@@ -26,7 +27,7 @@ checkpoint.
 
 SQLite is accessed through SQLAlchemy. Indexes reflect the query paths used by
 history (`ticker + created_at`, `status + created_at`, section lookup, event
-sequence, notes). `init_database()` adds columns a newer release
+sequence, notes, backtest cells). `init_database()` adds columns a newer release
 introduced to an existing database (they must be nullable). A future
 PostgreSQL move is therefore an engine and migration change rather than an
 application rewrite.
@@ -77,6 +78,18 @@ against it stores a snapshot (`runs.portfolio_snapshot`), passes it to
 (the book's fingerprint is part of upstream's checkpoint signature), and shows
 the rendered context the decision agents read. `None` (no context) and a flat
 book stay distinct end to end.
+
+## Backtests
+
+A backtest is a grid of cells; each cell is an ordinary `runs` row with
+`backtest_id` set, executed by the run orchestrator one at a time from an async
+sweep task. Cells use the backtest's own `results_dir` and memory log under
+`results/backtests/<id>/`, mirroring upstream's `run_backtest`, and run without
+checkpoints (a stopped or failed cell is re-run whole). After the cells, the
+sweep settles each ticker with `settle_pending`; outcomes are read back from the
+memory log (`load_entries`) and scored with upstream's `summarize`. A Stop sets a
+flag for the sweep and stops the running cell between steps; a backend restart
+leaves the backtest `stopped` and resumable.
 
 ## Deployment decision
 

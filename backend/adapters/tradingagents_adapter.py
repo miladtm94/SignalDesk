@@ -24,6 +24,7 @@ from pydantic import BaseModel, ValidationError
 
 from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS, RESULTS_DIR
 from tradingagents.agents.rating import run_rating
+from tradingagents.backtest import iter_grid, summarize as summarize_backtest
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -36,6 +37,8 @@ from tradingagents.llm_clients import (
 )
 from tradingagents.llm_clients.api_key_env import PROVIDER_API_KEY_ENV
 from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
+from tradingagents.memory import TradingMemoryLog
+from tradingagents.memory.settlement import resolve_benchmark
 from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
 from tradingagents.portfolio import PortfolioContext
 
@@ -422,8 +425,8 @@ def run_streaming_analysis(
     """Execute TradingAgents with accumulated-state streaming and safe fallback.
 
     ``portfolio`` is the saved book the decision agents work against (None for
-    none). ``results_dir`` and ``memory_log_path`` move the run's state log and
-    memory log. ``should_stop`` is polled between graph steps; when it
+    none). A backtest cell passes its sweep's ``results_dir`` and
+    ``memory_log_path``. ``should_stop`` is polled between graph steps; when it
     returns True the run raises ``RunStopped``, keeping any checkpoint.
     """
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -585,3 +588,121 @@ def chatgpt_plan_status() -> dict[str, Any]:
         "login_command": "tradingagents login chatgpt",
         "message": "Signed in to a ChatGPT plan" if email else "Not signed in to a ChatGPT plan.",
     }
+
+
+# --- backtests ----------------------------------------------------------------------
+
+
+def backtest_dates(start_date: str, end_date: str, every_n_days: int) -> list[str]:
+    """The analysis dates of a grid, exactly as upstream's backtest builds them."""
+    return iter_grid(start_date, end_date, every_n_days)
+
+
+def backtest_benchmark(ticker: str, config_overrides: dict[str, Any]) -> str:
+    """The index a ticker's alpha is measured against."""
+    return resolve_benchmark(ticker, _build_config(config_overrides, RESULTS_DIR))
+
+
+def _percent(text: str | None) -> float | None:
+    """A memory-log percentage ("+1.2%") as a fraction, or None when there is none."""
+    value = (text or "").strip().rstrip("%")
+    try:
+        return float(value) / 100
+    except ValueError:
+        return None
+
+
+def _days(text: str | None) -> int | None:
+    value = (text or "").strip().rstrip("d")
+    return int(value) if value.isdigit() else None
+
+
+def backtest_outcomes(memory_log_path: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    """Each logged decision of a sweep, keyed by (ticker, date): its rating and, once settled, outcome."""
+    if not memory_log_path.is_file():
+        return {}
+    outcomes = {}
+    for entry in TradingMemoryLog({"memory_log_path": str(memory_log_path)}).load_entries():
+        outcomes[(entry["ticker"], entry["date"])] = {
+            "rating": entry["rating"],
+            "pending": bool(entry["pending"]),
+            "raw_return": _percent(entry.get("raw")),
+            "alpha_return": _percent(entry.get("alpha")),
+            "holding_days": _days(entry.get("holding")),
+            "resolved_date": entry.get("resolved"),
+            "reflection": entry.get("reflection") or None,
+        }
+    return outcomes
+
+
+def backtest_scores(memory_log_path: Path) -> dict[str, Any] | None:
+    """Upstream's score of a sweep's settled decisions, grouped by rating."""
+    if not memory_log_path.is_file():
+        return None
+    summary = summarize_backtest(memory_log_path)
+    return {
+        "resolved": summary.resolved,
+        "pending": summary.pending,
+        "unscored": summary.unscored,
+        "holding": summary.holding,
+        "by_rating": {
+            rating: {"count": score.count, "hit_rate": score.hit_rate, "mean_alpha": score.mean_alpha}
+            for rating, score in summary.by_rating.items()
+        },
+        "text": summary.render(),
+    }
+
+
+def settle_backtest(
+    *,
+    selected_analysts: list[str],
+    config_overrides: dict[str, Any],
+    results_dir: Path,
+    memory_log_path: Path,
+    tickers: list[str],
+) -> dict[str, Any]:
+    """Settle every decision of a sweep whose holding window has traded.
+
+    A run settles the log's due decisions while its analysts work, so a
+    ticker's last cell stays pending until this pass, as in upstream's
+    ``run_backtest``. Each settlement asks the quick model for a reflection.
+    """
+    config = _build_config(config_overrides, results_dir, memory_log_path)
+    stats = StatsCallbackHandler()
+    graph = ConsoleTradingAgentsGraph(
+        selected_analysts=selected_analysts, debug=False, config=config, callbacks=[stats]
+    )
+    settled: list[tuple[str, str]] = []
+    failed: list[tuple[str, str, str]] = []
+    for ticker in tickers:
+        try:
+            done = graph.settle_pending(ticker)
+        except Exception as exc:  # reflection calls a provider; one ticker's failure is not the sweep's
+            logger.warning("Settling %s failed: %s", ticker, exc)
+            failed.append((ticker, "", str(exc)))
+            continue
+        settled.extend(done.settled)
+        failed.extend(done.failed)
+    return {"settled": settled, "failed": failed, "usage": stats.snapshot()}
+
+
+# What each rating claims will happen, as upstream's backtest scores it: Hold
+# claims no direction, so no outcome proves it right or wrong.
+RATING_DIRECTION = {"Buy": 1, "Overweight": 1, "Hold": 0, "Underweight": -1, "Sell": -1}
+
+
+def sweep_blocker(error_message: str | None) -> str | None:
+    """Why every remaining backtest cell would fail the same way, or None.
+
+    A reached plan limit, a refused sign-in or a missing Claude Code is not about
+    one cell: the sweep stops instead of failing each cell in turn, and resumes
+    once the cause is fixed.
+    """
+    text = error_message or ""
+    if "usage limit is reached" in text:
+        return "Your Claude plan's usage limit is reached. Resume this backtest once it resets."
+    if claude_code.LOGIN_HINT in text:
+        return "Claude Code is not signed in to a Claude plan. Run `tradingagents login claude`, then resume."
+    if claude_code.INSTALL_HINT in text:
+        return "Claude Code was not found on the backend's machine. Install it, then resume."
+    return None

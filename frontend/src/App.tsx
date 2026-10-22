@@ -3,11 +3,12 @@ import ReactMarkdown from "react-markdown";
 import { CandlestickSeries, ColorType, createChart, LineStyle } from "lightweight-charts";
 import {
   Activity, AlertCircle, ArrowLeft, ArrowRight, BarChart3, BookOpen, Bot,
-  Check, CheckCircle2, ChevronDown, CircleDollarSign, CircleStop, Download, FileText,
+  Check, CheckCircle2, ChevronDown, ChartLine, CircleDollarSign, CircleStop, Download, FileText,
   FlaskConical, History, KeyRound, Menu, MessageSquarePlus, Play, RefreshCw,
   Search, Settings, ShieldCheck, Sparkles, Star, Terminal, Trash2, Wallet, X,
 } from "lucide-react";
 import { api, Preferences, ProviderResponse, RunChart, RunDetail, RunPayload, RunSection, RunSummary, SecretMask, Subscription, streamUrl } from "./api";
+import { BacktestsView, BacktestView, NewBacktest } from "./Backtests";
 import { BookCard, HoldingsView, PortfolioPicker } from "./Holdings";
 import { estimateRunCost, loadModelDefaults, ModelSetup, Prices } from "./ModelSetup";
 import {
@@ -15,7 +16,7 @@ import {
   Metric, OfflineNotice, PageHeader, providerName, ratingTone, reasoningValue, selectableModels, sharedReasoningLevels, Status, Stepper, withReasoning,
 } from "./shared";
 
-type View = "dashboard" | "new" | "run" | "compare" | "settings" | "holdings";
+type View = "dashboard" | "new" | "run" | "compare" | "settings" | "backtests" | "new-backtest" | "backtest" | "holdings";
 // What to prefill when another view opens the analysis form.
 type LaunchIntent = { ticker: string; usePortfolio: boolean } | null;
 const sectionMeta: Record<string, { label: string; group: string; tone: string }> = {
@@ -42,11 +43,13 @@ const sectionOrder = Object.keys(sectionMeta);
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [activeBacktestId, setActiveBacktestId] = useState<string | null>(null);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [intent, setIntent] = useState<LaunchIntent>(null);
   const navigate = (next: View) => { setView(next); setMenuOpen(false); window.scrollTo(0, 0); };
   const openRun = (id: string) => { setActiveRunId(id); navigate("run"); };
+  const openBacktest = (id: string) => { setActiveBacktestId(id); navigate("backtest"); };
   const analyzeWithBook = (ticker: string) => { setIntent({ ticker, usePortfolio: true }); navigate("new"); };
 
   return <div className="app-shell">
@@ -55,6 +58,7 @@ export default function App() {
       <nav>
         <button className={view === "dashboard" ? "active" : ""} onClick={() => navigate("dashboard")}><BarChart3 size={18} /> Overview</button>
         <button className={view === "new" ? "active" : ""} onClick={() => { setIntent(null); navigate("new"); }}><FlaskConical size={18} /> New analysis</button>
+        <button className={["backtests", "new-backtest", "backtest"].includes(view) ? "active" : ""} onClick={() => navigate("backtests")}><ChartLine size={18} /> Backtests</button>
         <button className={view === "holdings" ? "active" : ""} onClick={() => navigate("holdings")}><Wallet size={18} /> Holdings</button>
         <button className={view === "run" ? "active" : ""} onClick={() => activeRunId ? navigate("run") : navigate("dashboard")}><History size={18} /> Run detail</button>
         <button className={view === "compare" ? "active" : ""} onClick={() => navigate("compare")}><BookOpen size={18} /> Compare notes</button>
@@ -66,8 +70,11 @@ export default function App() {
     <main>
       {view === "dashboard" && <Dashboard onNew={() => navigate("new")} onOpen={openRun} compareIds={compareIds} setCompareIds={setCompareIds} onCompare={() => navigate("compare")} />}
       {view === "new" && <NewAnalysis key={intent ? `${intent.ticker}:${intent.usePortfolio}` : "blank"} intent={intent} onLaunched={openRun} onSettings={() => navigate("settings")} onHoldings={() => navigate("holdings")} />}
+      {view === "backtests" && <BacktestsView onNew={() => navigate("new-backtest")} onOpen={openBacktest} />}
+      {view === "new-backtest" && <NewBacktest onLaunched={openBacktest} onSettings={() => navigate("settings")} onHoldings={() => navigate("holdings")} />}
+      {view === "backtest" && activeBacktestId && <BacktestView backtestId={activeBacktestId} onBack={() => navigate("backtests")} onOpenRun={openRun} />}
       {view === "holdings" && <HoldingsView onAnalyze={analyzeWithBook} />}
-      {view === "run" && activeRunId && <LiveRun runId={activeRunId} onBack={() => navigate("dashboard")} />}
+      {view === "run" && activeRunId && <LiveRun runId={activeRunId} onBack={() => navigate("dashboard")} onOpenBacktest={openBacktest} />}
       {view === "run" && !activeRunId && <EmptyState title="Choose a run from history" copy="Open a past run to read its complete research trail." action="Browse history" onAction={() => navigate("dashboard")} />}
       {view === "compare" && <CompareRuns ids={compareIds} onOpen={openRun} onBack={() => navigate("dashboard")} />}
       {view === "settings" && <SettingsView />}
@@ -109,7 +116,7 @@ function NewAnalysis({ intent, onLaunched, onSettings, onHoldings }: { intent: L
   </div><aside className="estimate-card"><div className="estimate-icon"><CircleDollarSign size={22} /></div><span className="eyebrow">{planBilled ? "PLAN USAGE" : "ROUGH RUN ESTIMATE"}</span><div className="estimate-price">{planBilled ? <>Plan <small className="estimate-unit">billed</small></> : <><sup>$</sup>{estimate.toFixed(2)}</>}</div><p>{planBilled ? `No per-token charge: this run counts toward your ${providerName(form.llm_provider)}'s usage limits. If a limit is reached, the checkpointed run resumes after it resets.` : "Planning guardrail based on typical input/output sizes. Tool use and provider billing can differ."}</p><dl><div><dt>Analyst passes</dt><dd>{form.selected_analysts.length}</dd></div><div><dt>Research debate</dt><dd>{form.max_debate_rounds} round{form.max_debate_rounds !== 1 && "s"}</dd></div><div><dt>Risk viewpoints</dt><dd>{form.max_risk_discuss_rounds * 3}</dd></div><div><dt>Portfolio</dt><dd className={form.use_portfolio ? "positive" : ""}>{form.use_portfolio ? "Against my book" : "None"}</dd></div><div><dt>Checkpointing</dt><dd className="positive">{form.checkpoint_enabled ? "On" : "Off"}</dd></div></dl>{error && <p className="form-error"><AlertCircle size={13} /> {error}</p>}<button className="launch-button" disabled={launching || !provider?.configured || !form.selected_analysts.length || !form.ticker || form.output_language.trim().length < 2 || (form.quick_think_llm === "custom" && !quickCustom.trim()) || (form.deep_think_llm === "custom" && !deepCustom.trim())} onClick={launch}>{launching ? <RefreshCw className="spin" size={17} /> : <Sparkles size={17} />} {launching ? "Starting analysis…" : "Run Analysis"}</button><small>{planBilled ? "Runs may take several minutes and count toward your plan's usage limits." : "Runs may take several minutes and call paid APIs."}</small></aside></section></>;
 }
 
-function LiveRun({ runId, onBack }: { runId: string; onBack: () => void }) {
+function LiveRun({ runId, onBack, onOpenBacktest }: { runId: string; onBack: () => void; onOpenBacktest: (id: string) => void }) {
   const [run, setRun] = useState<RunDetail | null>(null), [error, setError] = useState(""), [note, setNote] = useState(""), [tags, setTags] = useState(""), [lastActivity, setLastActivity] = useState<string | null>(null), [activeSectionKey, setActiveSectionKey] = useState<string | null>(null), [stopping, setStopping] = useState(false), [actionError, setActionError] = useState("");
   const load = () => api.run(runId).then((value) => { setRun(value); setError(""); const latest = value.events[value.events.length - 1]?.created_at ?? value.started_at; if (latest) setLastActivity((current) => !current || parseTimestamp(latest) > parseTimestamp(current) ? latest : current); }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [runId]);
@@ -137,12 +144,13 @@ function LiveRun({ runId, onBack }: { runId: string; onBack: () => void }) {
   const activeSection = ordered.find((section) => section.section_key === activeSectionKey) ?? ordered[0], completeCount = new Set(run.sections.map((s) => s.section_key)).size, expectedSections = run.selected_analysts.length + 8, progress = Math.min(100, Math.round((completeCount / expectedSections) * 100));
   const strategyRevision = run.sections.filter((section) => ["portfolio_manager", "research_manager", "trader"].includes(section.section_key)).map((section) => section.updated_at).join(":");
   const reasoningSetting = run.llm_provider === "google" ? run.config_snapshot.google_thinking_level : ["openai", "chatgpt"].includes(run.llm_provider) ? run.config_snapshot.openai_reasoning_effort : ["anthropic", "claude"].includes(run.llm_provider) ? run.config_snapshot.anthropic_effort : null;
-  const planBilled = isPlanBilled(run.llm_provider), active = ["queued", "running"].includes(run.status), resumable = ["failed", "stopped"].includes(run.status);
+  const planBilled = isPlanBilled(run.llm_provider), active = ["queued", "running"].includes(run.status), resumable = ["failed", "stopped"].includes(run.status) && !run.backtest_id;
   const stop = async () => { setStopping(true); setActionError(""); try { await api.stopRun(run.id); await load(); } catch (e) { setActionError(e instanceof Error ? e.message : "The run could not be stopped"); } finally { setStopping(false); } };
   const resume = async () => { setActionError(""); try { await api.resume(run.id); await load(); } catch (e) { setActionError(e instanceof Error ? e.message : "The run could not be resumed"); } };
-  return <><div className="run-topline"><button className="back-button" onClick={onBack}><ArrowLeft size={15} /> Run history</button><div className="run-actions"><button onClick={() => api.star(run.id, !run.starred).then(() => setRun({ ...run, starred: !run.starred }))}><Star size={15} fill={run.starred ? "currentColor" : "none"} /> {run.starred ? "Starred" : "Star"}</button>{active && <button onClick={stop} disabled={stopping}><CircleStop size={14} /> {stopping ? "Stopping…" : "Stop"}</button>}{resumable && <button onClick={resume}><Play size={14} /> Resume</button>}<a href={`/api/runs/${run.id}/report.md`}><Download size={14} /> Markdown</a></div></div>
+  return <><div className="run-topline"><button className="back-button" onClick={onBack}><ArrowLeft size={15} /> Run history</button><div className="run-actions"><button onClick={() => api.star(run.id, !run.starred).then(() => setRun({ ...run, starred: !run.starred }))}><Star size={15} fill={run.starred ? "currentColor" : "none"} /> {run.starred ? "Starred" : "Star"}</button>{active && !run.backtest_id && <button onClick={stop} disabled={stopping}><CircleStop size={14} /> {stopping ? "Stopping…" : "Stop"}</button>}{resumable && <button onClick={resume}><Play size={14} /> Resume</button>}{run.backtest_id && <button onClick={() => onOpenBacktest(run.backtest_id!)}><ChartLine size={14} /> Backtest</button>}<a href={`/api/runs/${run.id}/report.md`}><Download size={14} /> Markdown</a></div></div>
     <section className="run-hero"><div><span className="eyebrow">{run.asset_type.toUpperCase()} RESEARCH · {formatDate(run.trade_date)}</span><h1>{run.ticker}</h1><p>{run.quick_think_llm} for evidence gathering · {run.deep_think_llm} for synthesis</p></div><div className="decision-panel"><span>Portfolio rating</span><strong className={ratingTone(run.decision?.rating)}>{run.decision?.rating ?? (run.status === "running" ? "Pending" : "—")}</strong><small>{run.decision?.time_horizon ?? "Final synthesis appears after the risk debate"}</small></div></section>
     <section className="run-progress"><div className="progress-head"><Status value={run.status} /><span>{completeCount} of {expectedSections} research sections captured</span>{run.status === "running" && <span className="activity-stamp"><span className="pulse-dot" /> Provider call monitored · {lastActivity ? formatClock(lastActivity) : "starting"}</span>}<strong>{run.usage?.tokens_in.toLocaleString() ?? 0} in / {run.usage?.tokens_out.toLocaleString() ?? 0} out</strong><strong>{planBilled ? `Billed to plan${run.usage?.api_equivalent_usd ? ` · ≈ $${run.usage.api_equivalent_usd.toFixed(3)} at API prices` : ""}` : `$${run.usage?.estimated_cost_usd.toFixed(3) ?? "0.000"} est.`}</strong></div><div className="progress-track"><span style={{ width: `${run.status === "completed" ? 100 : progress}%` }} /></div></section>
+    {run.backtest_id && <div className="cell-banner"><ChartLine size={16} /><div><strong>One cell of a backtest</strong><span>Decided as of {formatDate(run.trade_date)} against the backtest's own memory log, without checkpoints. Stop, resume and scores live on the backtest.</span></div><button className="link-button" onClick={() => onOpenBacktest(run.backtest_id!)}>Open backtest <ArrowRight size={12} /></button></div>}
     {(run.error_message || actionError) && <div className="failure-banner"><AlertCircle size={18} /><div><strong>{actionError ? "That did not work" : run.status === "stopped" ? "The run was stopped" : "The run stopped before completion"}</strong><span>{actionError || run.error_message}</span></div></div>}
     <StrategyChart runId={run.id} revision={strategyRevision} />
     <div className="report-layout"><section className="report-flow">{ordered.length ? <><div className="section-tabs" role="tablist" aria-label="Research report sections">{ordered.map((section, index) => { const meta = sectionMeta[section.section_key] ?? { label: section.section_key, group: "Research", tone: "teal" }; const selected = section.section_key === activeSection?.section_key; return <button key={section.section_key} className={`section-tab ${selected ? "active" : ""}`} role="tab" aria-selected={selected} onClick={() => setActiveSectionKey(section.section_key)}><span>{String(index + 1).padStart(2, "0")} · {meta.group}</span><strong>{meta.label}</strong></button>; })}</div>{activeSection && <ReportSection section={activeSection} index={ordered.indexOf(activeSection)} />}</> : <div className="waiting-card"><RefreshCw className="spin" /><strong>The analyst desk is gathering evidence</strong><span>Sections will appear here as each agent completes.</span></div>}{run.status === "running" && ordered.length > 0 && <div className="next-section"><span className="pulse-dot" /><span>Waiting for the next completed agent step…</span></div>}</section><aside className="run-aside"><div className="record-card"><span className="eyebrow">REPRODUCIBILITY RECORD</span><dl><div><dt>Provider</dt><dd>{providerName(run.llm_provider)}</dd></div><div><dt>Deep model</dt><dd>{run.deep_think_llm}</dd></div><div><dt>Quick model</dt><dd>{run.quick_think_llm}</dd></div><div><dt>Reasoning / thinking</dt><dd>{reasoningSetting ? String(reasoningSetting) : "Provider default"}</dd></div><div><dt>Temperature</dt><dd>{run.temperature ?? "Default"}</dd></div><div><dt>Debate rounds</dt><dd>{run.max_debate_rounds} + {run.max_risk_discuss_rounds} risk</dd></div><div><dt>Checkpoint</dt><dd>{run.checkpoint_enabled ? "Enabled" : "Disabled"}</dd></div><div><dt>Portfolio</dt><dd>{run.used_portfolio ? "Decided against your book" : "No portfolio context"}</dd></div><div><dt>Started</dt><dd>{run.started_at ? formatTimestamp(run.started_at) : "Queued"}</dd></div></dl></div>{run.used_portfolio && <BookCard context={run.portfolio_context} />}<div className="notes-card"><div className="card-heading"><div><MessageSquarePlus size={16} /><strong>Notebook</strong></div><span>{run.notes.length}</span></div><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="What do you want to remember about this call?" /><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" /><button onClick={saveNote}>Save note</button>{run.notes.map((item) => <article key={item.id}><p>{item.note_text}</p><div>{item.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div><small>{formatTimestamp(item.created_at)}</small></article>)}</div></aside></div></>;

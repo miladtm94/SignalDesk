@@ -91,6 +91,7 @@ reproducible research outputs.
 | Persistence and recovery | Store run history, notes, usage, checkpoints, and encrypted provider credentials locally; resume interrupted LangGraph runs without repeating completed work. |
 | Reproducibility | Preserve the exact provider, models, reasoning settings, temperature, debate rounds, and checkpoint state alongside every result. |
 | Claude subscription | Run the whole desk on your own Claude Pro or Max plan through your local Claude Code, with no API key; the CLI, Python and SignalDesk all support it. |
+| Decision backtests | Launch a grid of tickers and dates from the browser, follow each cell live, stop and resume the sweep, and read hit rates and alpha by rating, per ticker and per cell. |
 | Holdings | Keep your current book (positions, average prices, cash) and have the trader, risk analysts and portfolio manager decide against it, with the exact book recorded on each run. |
 
 ### Configure a research run
@@ -121,9 +122,20 @@ to a single rating.
   <img src="screenshots/DecisionWindow-SignalDesk.png" alt="SignalDesk completed portfolio decision with reproducibility record and notebook" width="100%">
 </p>
 
+### Evaluate decisions over time
+
+A backtest runs the same pipeline over a grid of tickers and dates, each cell a
+complete run you can open, on a memory log of its own. Once a decision's holding
+window has traded it is scored on alpha against the instrument's benchmark, and
+the sweep is summarised by rating, by ticker and cell by cell.
+
+<p align="center">
+  <img src="screenshots/Backtest-SignalDesk.png" alt="SignalDesk backtest with scores by rating, an alpha heatmap and every decision" width="100%">
+</p>
+
 ### Decide against your book
 
-Save what you hold once; any run can then size against it. The page
+Save what you hold once; any run or backtest can then size against it. The page
 shows exactly what the decision agents will read for each ticker.
 
 <p align="center">
@@ -413,7 +425,7 @@ The CLI takes the same content as a JSON file: `tradingagents --portfolio my_boo
 
 An empty `positions` list means a flat book, which is different from passing nothing. A run without a portfolio is never treated as flat.
 
-In SignalDesk, the Holdings page keeps the book (it is validated as a `PortfolioContext`), and the analysis form offers "Decide against my book". Each run records the exact book it was given, so later edits never change a past result.
+In SignalDesk, the Holdings page keeps the book (it is validated as a `PortfolioContext`), and the analysis and backtest forms offer "Decide against my book". Each run records the exact book it was given, so later edits never change a past result.
 
 ## Persistence and Recovery
 
@@ -464,6 +476,8 @@ tradingagents backtest NVDA,AAPL --start 2026-06-01 --end 2026-08-01 --every 7
 ```
 
 Each cell is scored on realized alpha against the instrument's regional benchmark, grouped by rating. A decision is entered at the first close after its date, because a run reads news published after that day's close. Your own memory log is never written to, and re-running the same grid with `run_id=result.run_id` skips the cells that already ran, so an interrupted sweep continues where it stopped.
+
+SignalDesk's Backtests page runs the same engine from the browser: pick tickers, a date window and a step, watch each cell's agents live, stop and resume the sweep, settle recent cells once their window has traded, and read the scores by rating, ticker and cell, each linked to its full report. `make backtest SYMBOL=NVDA DATES="..."` and `make backtest-grid` run it from a terminal.
 
 ## Reproducibility
 

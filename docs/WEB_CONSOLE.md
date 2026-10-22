@@ -1,9 +1,9 @@
 # Signal Desk web research console
 
 Signal Desk is a single-user, local-first web layer over TradingAgents. It is a
-research notebook, not an execution engine: it starts analyses,
+research notebook, not an execution engine: it starts analyses and backtests,
 preserves each agent section as it arrives, records the exact model
-configuration, and makes past calls easier to annotate and compare.
+configuration, and makes past calls easier to annotate, compare and score.
 
 ## Local setup
 
@@ -67,12 +67,39 @@ short, with an optional average price in the instrument's quote currency), free
 cash and a currency label. It shows each holding's latest close and unrealized
 P/L, and exactly what the decision agents will read for any ticker.
 
-Choosing "Decide against my book" when launching an analysis gives the book to the trader, the risk analysts and the portfolio manager; the
+Choosing "Decide against my book" when launching an analysis or a backtest
+gives the book to the trader, the risk analysts and the portfolio manager; the
 analysts and researchers stay position-neutral, as upstream designs them. Three
 states stay distinct: no book (no portfolio context), a flat book (saved with no
 positions) and a book with positions. Each run stores the exact book it was
 launched with, and that snapshot is part of its checkpoint signature, so editing
 the book later never changes or resumes a past run with different holdings.
+
+## Backtests
+
+Backtests → New backtest takes up to 12 tickers, a first and last date and a
+step in days. The grid stops at today (as upstream's `iter_grid` does) and is
+capped at `TRADING_CONSOLE_BACKTEST_MAX_CELLS` cells (60 by default), because
+every cell is a complete multi-agent run.
+
+- Cells run one after another, ticker by ticker and date by date. Each is an
+  ordinary console run, without checkpoints, whose live sections, report and
+  notes open from the backtest; backtest cells stay out of the analysis history.
+- All cells share a memory log of the backtest's own, so the console's live
+  memory log is never written to, and a later cell learns only from the sweep's
+  earlier decisions whose outcome was known by its date.
+- After the last cell, every decision whose holding window has traded is
+  settled: entered at the first close after its date, held for
+  `holding_period_days` trading days, and scored on alpha against the
+  instrument's regional benchmark. A cell too recent to score stays pending;
+  "Settle" scores it once the market has traded through its window.
+- Stop ends the running cell at its next step; Resume re-runs the stopped,
+  failed and unstarted cells and settles again. A backtest interrupted by a
+  backend restart becomes resumable.
+- Scores come from upstream's `summarize` (decisions, hit rate and mean alpha
+  by rating), with the overall and per-ticker figures beside them. They are
+  indicative: one sampling per cell, and news and social feeds are not
+  archived. It is not a portfolio simulation.
 
 ## Stopping and resuming an analysis
 
@@ -86,20 +113,21 @@ backend restart) resume the same way.
 All console-owned state is redirected under `backend/data/` (or
 `TRADING_CONSOLE_DATA_DIR`):
 
-- `console.sqlite3` — runs, sections, events, decisions, usage, notes, keys
-  and holdings. Columns added by a newer release are added to an
+- `console.sqlite3` — runs, sections, events, decisions, usage, notes, keys,
+  holdings and backtests. Columns added by a newer release are added to an
   existing database at start-up.
 - `checkpoints/` — LangGraph per-ticker checkpoint databases
 - `memory/` — the live TradingAgents decision memory log
-- `results/` — internal JSON state logs
+- `results/` — internal JSON state logs; `results/backtests/<id>/` holds each
+  backtest's own memory log and state logs
 - `claude-code/` — Claude Code's settings in the Docker image (`CLAUDE_CONFIG_DIR`)
 
 Completed markdown report trees are written to the repository-level
 `reports/` directory (or `TRADING_CONSOLE_REPORTS_DIR`). Docker bind-mounts
 that directory, so reports remain available on the host after containers stop.
 
-The directory is git-ignored. `POST /api/runs` is rate-limited in process to
-three launches per minute per client. Set
+The directory is git-ignored. `POST /api/runs` and `POST /api/backtests` are
+rate-limited in process to three launches per minute per client. Set
 `TRADING_CONSOLE_DAILY_CAP_USD` to a positive value to turn on the optional
 estimated daily spend cap; plan-billed runs count as zero toward it.
 

@@ -12,6 +12,9 @@ REPORTS_DIR = Path(
 ).resolve()
 CACHE_DIR = DATA_DIR / "checkpoints"
 MEMORY_PATH = DATA_DIR / "memory" / "trading_memory.md"
+# Each backtest keeps its own memory log and state logs here, so a sweep never
+# writes to (or learns from) the console's live memory log.
+BACKTESTS_DIR = RESULTS_DIR / "backtests"
 
 # These must be set before the adapter imports TradingAgents. The upstream
 # DEFAULT_CONFIG reads them at import time.
@@ -19,7 +22,7 @@ os.environ["TRADINGAGENTS_RESULTS_DIR"] = str(RESULTS_DIR)
 os.environ["TRADINGAGENTS_CACHE_DIR"] = str(CACHE_DIR)
 os.environ["TRADINGAGENTS_MEMORY_LOG_PATH"] = str(MEMORY_PATH)
 
-for path in (DATA_DIR, RESULTS_DIR, REPORTS_DIR, CACHE_DIR, MEMORY_PATH.parent):
+for path in (DATA_DIR, RESULTS_DIR, REPORTS_DIR, CACHE_DIR, MEMORY_PATH.parent, BACKTESTS_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = os.getenv(
@@ -45,3 +48,5 @@ LLM_MAX_RETRIES = max(1, int(os.getenv("TRADING_CONSOLE_LLM_MAX_RETRIES", "1") o
 RUN_HEARTBEAT_SECONDS = max(
     5.0, float(os.getenv("TRADING_CONSOLE_HEARTBEAT_SECONDS", "15") or 15)
 )
+# Every backtest cell is a complete multi-agent run; keep accidental sweeps small.
+BACKTEST_MAX_CELLS = max(1, int(os.getenv("TRADING_CONSOLE_BACKTEST_MAX_CELLS", "60") or 60))

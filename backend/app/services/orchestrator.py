@@ -8,6 +8,7 @@ import threading
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import func, select
@@ -17,13 +18,19 @@ from backend.adapters.tradingagents_adapter import RunStopped, SectionEvent, run
 from ..database import SessionLocal
 from ..models import Decision, Run, RunEvent, RunSection, Usage
 from ..schemas import RunCreate
-from ..settings import REPORTS_DIR, RUN_HEARTBEAT_SECONDS
+from ..settings import BACKTESTS_DIR, REPORTS_DIR, RUN_HEARTBEAT_SECONDS
 from .costs import actual_usage_cost, estimate_run_cost
 
 logger = logging.getLogger(__name__)
 
 # A run in one of these states has finished; stopped and failed runs can resume.
 TERMINAL_STATUSES = frozenset({"completed", "failed", "stopped"})
+
+
+def backtest_paths(backtest_id: str) -> tuple[Path, Path]:
+    """A backtest's own results directory and memory log."""
+    directory = BACKTESTS_DIR / backtest_id
+    return directory, directory / "trading_memory.md"
 
 
 class RunBroadcaster:
@@ -188,6 +195,10 @@ class RunOrchestrator:
                     "report_dir": REPORTS_DIR / run.id,
                     "portfolio": run.portfolio_snapshot,
                 }
+                if run.backtest_id:
+                    # A cell reads and writes its sweep's memory log only.
+                    results_dir, memory_log_path = backtest_paths(run.backtest_id)
+                    payload.update(results_dir=results_dir, memory_log_path=memory_log_path)
             self._record_and_publish(run_id, "status", {"status": "running"})
 
             result = run_streaming_analysis(

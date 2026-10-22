@@ -90,6 +90,7 @@ def _serialize_run(run: Run, detail: bool = False) -> dict:
         "decision": run.decision,
         "usage": run.usage,
         "used_portfolio": run.portfolio_snapshot is not None,
+        "backtest_id": run.backtest_id,
     }
     if detail:
         output.update(
@@ -166,10 +167,14 @@ def list_runs(
     action: str | None = None,
     starred: bool | None = None,
     tag: str | None = None,
+    include_backtests: bool = False,
     sort: str = Query(default="created_at", pattern="^(created_at|trade_date|ticker|rating|action)$"),
     direction: str = Query(default="desc", pattern="^(asc|desc)$"),
 ) -> list[dict]:
     query = _run_query()
+    # Backtest cells are read from their backtest; history lists standalone runs.
+    if not include_backtests:
+        query = query.where(Run.backtest_id.is_(None))
     if ticker:
         query = query.where(Run.ticker == ticker.strip().upper())
     if date_from:
@@ -252,6 +257,8 @@ async def resume_run(run_id: str) -> RunCreated:
         run = session.get(Run, run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Run not found")
+        if run.backtest_id:
+            raise HTTPException(status_code=409, detail="Resume this cell from its backtest.")
         estimate = run.estimated_cost_usd
     if not orchestrator.resume(run_id):
         raise HTTPException(status_code=409, detail="Only stopped, failed or completed runs can be resumed.")
@@ -265,6 +272,8 @@ def stop_run(run_id: str) -> dict:
         run = session.get(Run, run_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Run not found")
+        if run.backtest_id:
+            raise HTTPException(status_code=409, detail="Stop this cell from its backtest.")
     if not orchestrator.request_stop(run_id):
         raise HTTPException(status_code=409, detail="Only a queued or running analysis can be stopped.")
     with SessionLocal() as session:
@@ -297,6 +306,8 @@ def delete_run(run_id: str) -> Response:
             raise HTTPException(status_code=404, detail="Run not found")
         if run.status == "running":
             raise HTTPException(status_code=409, detail="A running analysis cannot be deleted.")
+        if run.backtest_id:
+            raise HTTPException(status_code=409, detail="Delete this cell with its backtest.")
         session.delete(run)
     orchestrator.delete_report_tree(run_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -99,6 +99,7 @@ export type RunSummary = {
   decision: Decision | null;
   usage: Usage | null;
   used_portfolio: boolean;
+  backtest_id: string | null;
 };
 
 export type RunSection = {
@@ -197,6 +198,71 @@ export type SavedPortfolio = Portfolio & { configured: boolean; updated_at: stri
 export type PortfolioPreview = { ticker: string; held: Position | null; context: string };
 export type Quote = { ticker: string; last_close: number | null; as_of: string | null; error: string | null };
 
+export type BacktestStatus = "queued" | "running" | "stopping" | "settling" | "completed" | "stopped" | "failed";
+export type CellStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+export type BacktestCell = {
+  position: number;
+  ticker: string;
+  trade_date: string;
+  status: CellStatus;
+  run_id: string | null;
+  rating: string | null;
+  pending: boolean;
+  raw_return: number | null;
+  alpha_return: number | null;
+  holding_days: number | null;
+  resolved_date: string | null;
+  benchmark: string | null;
+  reflection: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+export type RatingScore = { count: number; hit_rate: number | null; mean_alpha: number };
+export type GroupScore = { resolved: number; directional: number; hit_rate: number | null; mean_alpha: number | null };
+export type BacktestScores = {
+  upstream: { resolved: number; pending: number; unscored: number; holding: string; by_rating: Record<string, RatingScore>; text: string } | null;
+  console: (GroupScore & { per_ticker: Record<string, GroupScore> }) | null;
+  settlement: { settled: number; failed: { ticker: string; date: string; reason: string }[] } | null;
+};
+export type BacktestSummary = {
+  id: string;
+  name: string | null;
+  tickers: string[];
+  start_date: string;
+  end_date: string;
+  every_n_days: number;
+  dates: string[];
+  asset_type: string;
+  selected_analysts: string[];
+  llm_provider: string;
+  deep_think_llm: string;
+  quick_think_llm: string;
+  status: BacktestStatus;
+  error_message: string | null;
+  estimated_cost_usd: number;
+  used_portfolio: boolean;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  settled_at: string | null;
+  progress: Record<CellStatus | "total" | "scored", number>;
+  scores: BacktestScores | null;
+  usage: { llm_calls: number; tokens_in: number; tokens_out: number; estimated_cost_usd: number; api_equivalent_usd: number };
+};
+export type BacktestDetail = BacktestSummary & {
+  config_snapshot: Record<string, unknown>;
+  portfolio_snapshot: Portfolio | null;
+  cells: BacktestCell[];
+};
+export type BacktestPayload = Omit<RunPayload, "ticker" | "trade_date" | "checkpoint_enabled"> & {
+  name: string | null;
+  tickers: string[];
+  start_date: string;
+  end_date: string;
+  every_n_days: number;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -237,6 +303,14 @@ export const api = {
   clearPortfolio: () => request<void>("/api/portfolio", { method: "DELETE" }),
   portfolioPreview: (ticker: string) => request<PortfolioPreview>(`/api/portfolio/preview?ticker=${encodeURIComponent(ticker)}`),
   portfolioQuotes: () => request<Quote[]>("/api/portfolio/quotes"),
+  backtests: () => request<BacktestSummary[]>("/api/backtests"),
+  backtest: (id: string) => request<BacktestDetail>(`/api/backtests/${id}`),
+  backtestGrid: (start: string, end: string, every: number, tickers: number) => request<{ dates: string[]; cells: number; max_cells: number }>(`/api/backtests/grid?start_date=${start}&end_date=${end}&every_n_days=${every}&tickers=${Math.max(1, tickers)}`),
+  createBacktest: (payload: BacktestPayload) => request<{ backtest_id: string; cells: number; estimated_cost_usd: number }>("/api/backtests", { method: "POST", body: JSON.stringify(payload) }),
+  stopBacktest: (id: string) => request<BacktestSummary>(`/api/backtests/${id}/stop`, { method: "POST" }),
+  resumeBacktest: (id: string) => request<BacktestSummary>(`/api/backtests/${id}/resume`, { method: "POST" }),
+  settleBacktest: (id: string) => request<BacktestSummary>(`/api/backtests/${id}/settle`, { method: "POST" }),
+  deleteBacktest: (id: string) => request<void>(`/api/backtests/${id}`, { method: "DELETE" }),
 };
 
 export function streamUrl(runId: string) {

@@ -141,6 +141,7 @@ class RunSummary(BaseModel):
     decision: DecisionOut | None = None
     usage: UsageOut | None = None
     used_portfolio: bool = False
+    backtest_id: str | None = None
 
 
 class RunDetail(RunSummary):
@@ -319,3 +320,91 @@ class PortfolioQuote(BaseModel):
     last_close: float | None
     as_of: str | None
     error: str | None = None
+
+
+class BacktestCreate(AnalysisSettings):
+    name: str | None = Field(default=None, max_length=120)
+    tickers: list[str] = Field(min_length=1, max_length=12)
+    start_date: date
+    end_date: date
+    every_n_days: int = Field(default=7, ge=1, le=365)
+
+    @field_validator("tickers")
+    @classmethod
+    def normalize_tickers(cls, value: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(_compact_symbol(ticker) for ticker in value if ticker.strip()))
+        if not cleaned:
+            raise ValueError("name at least one ticker")
+        return cleaned
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value: str | None) -> str | None:
+        value = (value or "").strip()
+        return value or None
+
+
+class BacktestCreated(BaseModel):
+    backtest_id: str
+    status: str
+    cells: int
+    estimated_cost_usd: float
+
+
+class GridPreview(BaseModel):
+    dates: list[str]
+    cells: int
+    max_cells: int
+
+
+class BacktestCellOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    position: int
+    ticker: str
+    trade_date: date
+    status: str
+    run_id: str | None
+    rating: str | None
+    pending: bool
+    raw_return: float | None
+    alpha_return: float | None
+    holding_days: int | None
+    resolved_date: str | None
+    benchmark: str | None
+    reflection: str | None
+    error_message: str | None
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
+class BacktestSummary(BaseModel):
+    id: str
+    name: str | None
+    tickers: list[str]
+    start_date: date
+    end_date: date
+    every_n_days: int
+    dates: list[str]
+    asset_type: str
+    selected_analysts: list[str]
+    llm_provider: str
+    deep_think_llm: str
+    quick_think_llm: str
+    status: str
+    error_message: str | None
+    estimated_cost_usd: float
+    used_portfolio: bool
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    settled_at: datetime | None
+    progress: dict[str, int]
+    scores: dict[str, Any] | None = None
+    usage: dict[str, Any]
+
+
+class BacktestDetail(BacktestSummary):
+    config_snapshot: dict[str, Any]
+    portfolio_snapshot: dict[str, Any] | None
+    cells: list[BacktestCellOut]

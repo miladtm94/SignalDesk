@@ -253,6 +253,21 @@ def test_a_stop_request_ends_the_run_between_steps(monkeypatch, tmp_path):
         _run(monkeypatch, tmp_path, should_stop=lambda: next(calls))
 
 
+def test_a_backtest_cell_uses_its_sweep_log_and_results(monkeypatch, tmp_path):
+    captured = {}
+    original = MockGraph.__init__
+
+    def capture(self, **kwargs):
+        captured.update(kwargs["config"])
+        original(self, **kwargs)
+
+    monkeypatch.setattr(MockGraph, "__init__", capture)
+    _run(monkeypatch, tmp_path, results_dir=tmp_path / "sweep", memory_log_path=tmp_path / "sweep" / "log.md")
+
+    assert captured["results_dir"] == str(tmp_path / "sweep")
+    assert captured["memory_log_path"] == str(tmp_path / "sweep" / "log.md")
+
+
 def test_a_plain_run_writes_state_logs_to_the_console_results_directory(tmp_path):
     config = adapter._build_config({}, adapter.RESULTS_DIR)
     assert config["results_dir"] == str(adapter.RESULTS_DIR)
@@ -285,3 +300,12 @@ def test_a_claude_plan_tier_keeps_a_whole_answer_timeout(monkeypatch):
     assert seen["deep"]["timeout"] == adapter.claude_code.DEFAULT_TIMEOUT
     assert seen["quick"]["timeout"] == 120
 
+
+def test_sweep_wide_failures_are_recognised():
+    from tradingagents.llm_clients import claude_code
+
+    assert "resets" in adapter.sweep_blocker(str(claude_code.ClaudeUsageLimit(
+        "Your Claude plan's usage limit is reached (x).")))
+    assert "login claude" in adapter.sweep_blocker(f"Claude Code's sign-in was refused (401). {claude_code.LOGIN_HINT}")
+    assert adapter.sweep_blocker("Prices for NVDA were unavailable") is None
+    assert adapter.sweep_blocker(None) is None

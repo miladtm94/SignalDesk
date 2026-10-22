@@ -58,6 +58,8 @@ class Run(Base):
     # The book the decision agents saw, exactly as launched; None means the run
     # had no portfolio context (which is not the same as a flat book).
     portfolio_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Set when the run is one cell of a backtest grid.
+    backtest_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     sections: Mapped[list[RunSection]] = relationship(cascade="all, delete-orphan", back_populates="run")
     decision: Mapped[Decision | None] = relationship(cascade="all, delete-orphan", back_populates="run", uselist=False)
@@ -165,3 +167,69 @@ class AppPreference(Base):
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Backtest(Base):
+    """A grid of (ticker, date) analyses scored against what each instrument did next."""
+
+    __tablename__ = "backtests"
+    __table_args__ = (Index("idx_backtests_status_created", "status", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    tickers: Mapped[list[str]] = mapped_column(JSON)
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    every_n_days: Mapped[int] = mapped_column(Integer)
+    dates: Mapped[list[str]] = mapped_column(JSON)
+    asset_type: Mapped[str] = mapped_column(String(20), default="stock")
+    selected_analysts: Mapped[list[str]] = mapped_column(JSON)
+    llm_provider: Mapped[str] = mapped_column(String(40))
+    deep_think_llm: Mapped[str] = mapped_column(String(160))
+    quick_think_llm: Mapped[str] = mapped_column(String(160))
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    portfolio_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    estimated_cost_usd: Mapped[float] = mapped_column(Float, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    cells: Mapped[list[BacktestCell]] = relationship(
+        cascade="all, delete-orphan", back_populates="backtest", order_by="BacktestCell.position"
+    )
+
+
+class BacktestCell(Base):
+    """One (ticker, date) of a backtest: the run that decided it and how it turned out."""
+
+    __tablename__ = "backtest_cells"
+    __table_args__ = (
+        UniqueConstraint("backtest_id", "ticker", "trade_date", name="uq_backtest_cells_grid"),
+        Index("idx_backtest_cells_backtest_position", "backtest_id", "position"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    backtest_id: Mapped[str] = mapped_column(ForeignKey("backtests.id", ondelete="CASCADE"))
+    position: Mapped[int] = mapped_column(Integer)
+    ticker: Mapped[str] = mapped_column(String(32))
+    trade_date: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    rating: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # True until the decision's holding window has traded and it was scored.
+    pending: Mapped[bool] = mapped_column(Boolean, default=True)
+    raw_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    alpha_return: Mapped[float | None] = mapped_column(Float, nullable=True)
+    holding_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    benchmark: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    reflection: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    backtest: Mapped[Backtest] = relationship(back_populates="cells")

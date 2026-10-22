@@ -135,7 +135,9 @@ def test_an_older_database_gains_the_new_columns(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'old.sqlite3'}")
     database.Base.metadata.create_all(engine)
     with engine.begin() as connection:
-        for table, column in (("runs", "portfolio_snapshot"), ("usage", "api_equivalent_usd")):
+        connection.exec_driver_sql("DROP INDEX ix_runs_backtest_id")
+        for table, column in (("runs", "backtest_id"), ("runs", "portfolio_snapshot"),
+                              ("usage", "api_equivalent_usd")):
             connection.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {column}")
         connection.exec_driver_sql(
             "INSERT INTO runs (id, ticker, trade_date, asset_type, selected_analysts, llm_provider, "
@@ -147,10 +149,11 @@ def test_an_older_database_gains_the_new_columns(tmp_path):
     with engine.begin() as connection:
         database._add_missing_columns(connection)
     columns = {table: {c["name"] for c in inspect(engine).get_columns(table)} for table in ("runs", "usage")}
-    assert "portfolio_snapshot" in columns["runs"]
+    assert {"portfolio_snapshot", "backtest_id"} <= columns["runs"]
     assert "api_equivalent_usd" in columns["usage"]
+    assert "ix_runs_backtest_id" in {i["name"] for i in inspect(engine).get_indexes("runs")}
     with engine.connect() as connection:
-        assert connection.exec_driver_sql("SELECT portfolio_snapshot FROM runs WHERE id='old'").scalar() is None
+        assert connection.exec_driver_sql("SELECT backtest_id FROM runs WHERE id='old'").scalar() is None
     # Running it again changes nothing.
     with engine.begin() as connection:
         database._add_missing_columns(connection)

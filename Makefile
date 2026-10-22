@@ -1,14 +1,30 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
+# TradingAgents needs Python 3.11 or later; use the newest one installed.
+BASE_PYTHON ?= $(shell for p in python3.13 python3.12 python3.11 python3; do command -v $$p >/dev/null 2>&1 && { echo $$p; break; }; done)
 
-.PHONY: venv install test lint web-install web-dev web-backend web-test web-build fetch sync push status backtest
+.PHONY: venv install install-claude test lint web-install web-dev web-backend web-test web-build fetch sync push status backtest backtest-grid login-claude
 
 venv:
-	python3 -m venv $(VENV)
+	@if [ -x $(PYTHON) ] && ! $(PYTHON) -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then \
+		echo "$(VENV) runs Python $$($(PYTHON) -c 'import platform; print(platform.python_version())'), but TradingAgents needs 3.11 or later."; \
+		echo "Recreate it: rm -rf $(VENV) && make install web-install"; \
+		exit 1; \
+	fi
+	@[ -x $(PYTHON) ] || $(BASE_PYTHON) -m venv $(VENV)
 	$(PYTHON) -m pip install --upgrade pip
 
 install: venv
 	$(PYTHON) -m pip install -e ".[dev]"
+
+# Claude Code, bundled by the Agent SDK, for the Claude plan provider on a
+# machine that has no Claude Code installed.
+install-claude: venv
+	$(PYTHON) -m pip install -e ".[claude]"
+
+# Sign Claude Code in to your Claude Pro or Max plan (Claude Code's own login).
+login-claude:
+	$(PYTHON) -m cli.main login claude
 
 test:
 	$(PYTHON) -m pytest
@@ -50,10 +66,10 @@ status:
 	git status
 	git remote -v
 
-# Run the historical-decision smoke test (scripts/backtest.py): runs the full
-# agent pipeline on each given date and scores the decision against the
-# actual subsequent price move. Each date is a full multi-agent LLM run, so
-# keep DATES short against a free-tier provider quota.
+# Score past decisions on dates you choose (scripts/backtest.py, upstream's
+# backtest engine): each date is a full multi-agent run, entered at the first
+# close after it and scored on alpha against the regional benchmark. The sweep
+# keeps a memory log of its own, so your live memory log is never written to.
 #
 # Usage:
 #   make backtest SYMBOL=NVDA DATES="2025-01-15 2025-02-14 2025-03-17"
@@ -64,3 +80,13 @@ DATES ?= 2025-01-15 2025-02-14 2025-03-17
 
 backtest:
 	$(PYTHON) scripts/backtest.py $(SYMBOL) $(DATES)
+
+# The same engine over a regular grid of tickers and dates (tradingagents backtest):
+#   make backtest-grid SYMBOLS=NVDA,AAPL START=2026-06-01 END=2026-08-01 EVERY=7
+SYMBOLS ?= NVDA
+START ?= 2026-06-01
+END ?= 2026-08-01
+EVERY ?= 7
+
+backtest-grid:
+	$(PYTHON) -m cli.main backtest $(SYMBOLS) --start $(START) --end $(END) --every $(EVERY)

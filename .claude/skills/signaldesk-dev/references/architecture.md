@@ -164,6 +164,17 @@ missing indexes.
 - `Backtests.tsx` — `BacktestsView`, `NewBacktest`, `BacktestView`, `CellDetail`.
 - `Holdings.tsx` — `HoldingsView`, `AgentView`, `PortfolioPicker`, `BookCard`.
 - `ModelSetup.tsx` — `loadModelDefaults`, `estimateRunCost`, `ModelSetup`.
+- `Report.tsx` — `Report`, the one renderer for agent markdown (run view and
+  compare view). `react-markdown` + `remark-gfm` (tables) + a local rehype pass
+  (`decorate`): heading emojis by topic (`HEADING_EMOJI`, first match wins), a
+  🟢/🔴/🟡 marker on table columns named like Interpretation/Signal/Bias, and
+  `**Label**:` paragraphs grouped with what follows into `.report-field` blocks.
+  `prepare()` lifts short typed fields (Rating, Action, Entry Price, Stop Loss,
+  Price Target, Time Horizon…) into tiles and the `FINAL TRANSACTION PROPOSAL`
+  line into a banner; `splitTurns()` turns upstream's `Bull Analyst:` prefixes
+  into round headers. Display only: nothing parsed here is stored. Section
+  emojis live in `sectionMeta.icon` (`App.tsx`). Tailwind's preflight strips list
+  markers, so `.markdown` restores them in `styles.css`.
 - `shared.tsx` — formatters (`parseTimestamp`, `localISODate`, percent/number),
   `providerName`, model/reasoning helpers, small components.
 - `api.ts` — every type and endpoint; FastAPI 422 messages are flattened.

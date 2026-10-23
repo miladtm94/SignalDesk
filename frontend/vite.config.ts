@@ -17,7 +17,7 @@ export default defineConfig({
         // The chart and markdown libraries change far less often than the app.
         manualChunks: {
           charts: ["lightweight-charts"],
-          markdown: ["react-markdown"],
+          markdown: ["react-markdown", "remark-gfm"],
         },
       },
     },

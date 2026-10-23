@@ -48,7 +48,7 @@ fixes, `2db658a` claude provider, `b9d5d25` SignalDesk plan + holdings + stop,
 | Console API | `backend/app/api/{runs,backtests,portfolio,config,watchlist}.py` |
 | Console services | `backend/app/services/{orchestrator,backtests,portfolio,providers,costs,secrets,charts}.py` |
 | Console schema | `backend/app/{models,schemas,database,settings}.py` |
-| Frontend | `frontend/src/App.tsx` (shell, dashboard, new analysis, run view, settings), `Backtests.tsx`, `Holdings.tsx`, `ModelSetup.tsx`, `shared.tsx`, `api.ts`, `styles.css` |
+| Frontend | `frontend/src/App.tsx` (shell, dashboard, new analysis, run view, settings), `Backtests.tsx`, `Holdings.tsx`, `ModelSetup.tsx`, `Report.tsx` (agent markdown renderer), `shared.tsx`, `api.ts`, `styles.css` |
 | Docs | `docs/WEB_CONSOLE.md` (user guide), `docs/ARCHITECTURE.md`, `docs/UPSTREAM_UPGRADE.md` (migration log + every upstream file the fork touches), `docs/TESTING.md`, `KNOWN_UPSTREAM_ISSUES.md` |
 
 `references/architecture.md` has the full map, the run/backtest data flows, the
@@ -82,7 +82,8 @@ DB tables and every API route.
 7. **Don't regex decision markdown into structured fields.** Upstream keeps only
    rendered text for trader/RM decisions; fields stay null until upstream exposes
    typed values (see `KNOWN_UPSTREAM_ISSUES.md`). The PM rating comes from
-   `run_rating()`.
+   `run_rating()`. Reading the markdown for display is fine (`Report.tsx` tiles,
+   `services/charts.py` levels), as long as nothing parsed that way is stored.
 8. **Schema changes:** new tables come from `create_all`; new columns on existing
    tables must be **nullable** — `database._add_missing_columns` adds them to
    users' existing SQLite files at start-up and refuses non-nullable ones.

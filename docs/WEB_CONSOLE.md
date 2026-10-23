@@ -103,6 +103,26 @@ every cell is a complete multi-agent run.
   indicative: one sampling per cell, and news and social feeds are not
   archived. It is not a portfolio simulation.
 
+## Reading a report
+
+Each agent's section is shown as formatted text, with the model's wording left
+as it is:
+
+- Tables render as tables, and in columns that interpret a figure
+  (Interpretation, Signal, Bias…) each cell gets 🟢, 🔴 or 🟡 for bullish,
+  bearish, or mixed and cautious wording.
+- The decision fields (Rating, Action, Entry Price, Stop Loss, Price Target,
+  Time Horizon) appear as tiles at the top of the section, and the trader's
+  `FINAL TRANSACTION PROPOSAL` appears as a banner at the end.
+- Longer fields (Executive Summary, Investment Thesis, Strategic Actions…) are
+  labelled blocks, and headings get an emoji for their topic (📈 trend,
+  ⚡ momentum, 🏦 balance sheet, 📋 summary table…).
+- Debates with more than one round show a header for each turn, such as
+  🐂 Bull analyst · Round 2.
+
+The markers and emojis are reading aids picked from the words used, not extra
+analysis. The Markdown download is the agents' text unchanged.
+
 ## Stopping and resuming an analysis
 
 A running analysis has a Stop button. It ends at the next agent step; with

@@ -32,7 +32,7 @@ def client():
 
 def test_no_saved_book_is_not_a_flat_book(client):
     assert client.get("/api/portfolio").json() == {
-        "configured": False, "cash": None, "currency": None, "positions": [], "updated_at": None}
+        "configured": False, "cash": None, "currency": None, "positions": [], "use_by_default": False, "updated_at": None}
     saved = client.put("/api/portfolio", json={"cash": 500, "positions": []}).json()
     assert saved["configured"] is True and saved["positions"] == []
     preview = client.get("/api/portfolio/preview", params={"ticker": "NVDA"}).json()
@@ -50,6 +50,49 @@ def test_a_saved_book_is_normalized_and_previewed_as_the_agents_read_it(client):
     assert "Current position in NVDA: 120 units, average price 150.00" in preview["context"]
     assert "Cash available: 25,000.00 USD" in preview["context"]
     assert "Other positions: AAPL -10" in preview["context"]
+
+
+MIXED = {"cash": 100000, "currency": "aud", "use_by_default": True, "positions": [
+    {"ticker": "NVDA", "quantity": 20, "average_price": 180, "currency": "usd"},
+    {"ticker": "NXT.AX", "quantity": 85, "average_price": 15.31, "currency": "AUD"},
+    {"ticker": "AAPL", "quantity": 5},
+]}
+
+
+def test_each_position_s_price_currency_reaches_the_agents(client):
+    body = client.put("/api/portfolio", json=MIXED).json()
+    assert [p["currency"] for p in body["positions"]] == ["USD", "AUD", None]
+
+    nvda = client.get("/api/portfolio/preview", params={"ticker": "NVDA"}).json()["context"]
+    assert "Current position in NVDA: 20 units, average price 180.00 USD" in nvda
+    assert "The average price is in USD; cash is in AUD." in nvda
+    asx = client.get("/api/portfolio/preview", params={"ticker": "NXT.AX"}).json()["context"]
+    assert "average price 15.31 AUD" in asx and "cash is in" not in asx
+    plain = client.get("/api/portfolio/preview", params={"ticker": "AAPL"}).json()["context"]
+    assert "Current position in AAPL: 5 units\n" in plain
+
+
+def test_a_book_without_position_currencies_reads_and_fingerprints_as_upstream_s():
+    from tradingagents.portfolio import PortfolioContext
+
+    book = {"cash": 25000, "currency": "USD", "positions": [{"ticker": "NVDA", "quantity": 120, "average_price": 150}]}
+    ours, theirs = adapter.ConsolePortfolio.model_validate(book), PortfolioContext.model_validate(book)
+    assert ours.render("NVDA") == theirs.render("NVDA")
+    assert ours.fingerprint() == theirs.fingerprint()
+
+
+def test_the_book_can_be_the_launch_default_without_entering_runs(client, monkeypatch):
+    monkeypatch.setattr(orchestrator_module.orchestrator, "start", lambda run_id: None)
+    assert client.put("/api/portfolio", json=MIXED).json()["use_by_default"] is True
+    assert client.get("/api/portfolio").json()["use_by_default"] is True
+
+    run_id = client.post("/api/runs", json={**RUN, "use_portfolio": True}).json()["run_id"]
+    snapshot = client.get(f"/api/runs/{run_id}").json()["portfolio_snapshot"]
+    assert "use_by_default" not in snapshot and snapshot["positions"][0]["currency"] == "USD"
+    client.delete(f"/api/runs/{run_id}")
+
+    saved = client.put("/api/portfolio", json={**MIXED, "use_by_default": False}).json()
+    assert saved["use_by_default"] is False
 
 
 @pytest.mark.parametrize("book, problem", [
@@ -88,7 +131,7 @@ def test_a_run_decides_against_the_book_it_was_launched_with(client, monkeypatch
     client.put("/api/portfolio", json={"cash": 1, "positions": []})
     detail = client.get(f"/api/runs/{run_id}").json()
     assert detail["used_portfolio"] is True
-    assert detail["portfolio_snapshot"]["positions"][0] == {"ticker": "NVDA", "quantity": 120.0, "average_price": 150.0}
+    assert detail["portfolio_snapshot"]["positions"][0] == {"ticker": "NVDA", "quantity": 120.0, "average_price": 150.0, "currency": None}
     assert "Current position in NVDA: 120 units" in detail["portfolio_context"]
 
     plain = client.post("/api/runs", json=RUN).json()["run_id"]
@@ -186,3 +229,39 @@ def test_plan_billed_runs_cost_nothing_per_token():
                              analysts=4, debate_rounds=2, risk_rounds=2) == 0
     assert actual_usage_cost(provider="chatgpt", quick_model="gpt-5.5", deep_model="gpt-5.5",
                              tokens_in=10**6, tokens_out=10**5) == 0
+
+
+def test_claude_can_be_signed_in_from_the_browser_and_stays_the_default(client, monkeypatch):
+    sent = []
+    signed_in = {"ready": True, "installed": True, "signed_in": True, "plan": "max", "account": "a•••@example.com",
+                 "message": "Signed in to a Claude Max plan", "login_command": "tradingagents login claude"}
+    monkeypatch.setattr(adapter.claude_code, "start_browser_sign_in", lambda: "https://claude.com/cai/oauth/authorize?code=true")
+    monkeypatch.setattr(adapter.claude_code, "finish_browser_sign_in", lambda code: sent.append(code) or {})
+    monkeypatch.setattr(adapter.claude_code, "cancel_browser_sign_in", lambda: sent.append("cancelled"))
+    monkeypatch.setattr(adapter, "claude_plan_status", lambda fresh=False: signed_in)
+
+    started = client.post("/api/config/subscriptions/claude/sign-in").json()
+    assert started == {"url": "https://claude.com/cai/oauth/authorize?code=true", "expires_in": 600}
+    finished = client.post("/api/config/subscriptions/claude/sign-in/code", json={"code": "abc#state"})
+    assert finished.status_code == 200 and finished.json()["ready"] is True and sent == ["abc#state"]
+    assert client.delete("/api/config/subscriptions/claude/sign-in").status_code == 204 and sent[-1] == "cancelled"
+
+    # Once ready, the plan can be saved as the default, and later sessions start on it.
+    monkeypatch.setattr("backend.app.services.providers.claude_plan_status", lambda fresh=False: signed_in)
+    saved = client.put("/api/config/preferences", json={
+        "llm_provider": "claude", "quick_think_llm": "claude-sonnet-5-5", "deep_think_llm": "claude-opus-5-5"})
+    assert saved.status_code == 200
+    assert client.get("/api/config/preferences").json()["llm_provider"] == "claude"
+
+
+def test_a_browser_sign_in_that_fails_says_why(client, monkeypatch):
+    def refuse(*_args):
+        raise adapter.claude_code.ClaudeSignInError("Claude Code did not accept the code; start the sign-in again.")
+
+    monkeypatch.setattr(adapter.claude_code, "start_browser_sign_in", lambda: refuse())
+    monkeypatch.setattr(adapter.claude_code, "finish_browser_sign_in", refuse)
+    started = client.post("/api/config/subscriptions/claude/sign-in")
+    assert started.status_code == 409 and "did not accept" in started.json()["detail"]
+    finished = client.post("/api/config/subscriptions/claude/sign-in/code", json={"code": "bad"})
+    assert finished.status_code == 400 and "start the sign-in again" in finished.json()["detail"]
+    assert client.post("/api/config/subscriptions/claude/sign-in/code", json={"code": ""}).status_code == 422

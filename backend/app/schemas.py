@@ -216,6 +216,12 @@ class SecretWrite(BaseModel):
     value: str = Field(min_length=1, max_length=10_000)
 
 
+class SignInCode(BaseModel):
+    """The code claude.com shows once the person approves the sign-in."""
+
+    code: str = Field(min_length=1, max_length=2_000)
+
+
 class SecretMask(BaseModel):
     name: str
     configured: bool
@@ -259,15 +265,26 @@ class PreferencesWrite(BaseModel):
         return cleaned
 
 
+def _currency_label(value: str | None) -> str | None:
+    value = (value or "").strip().upper()
+    return value or None
+
+
 class PositionIn(BaseModel):
     ticker: str = Field(min_length=1, max_length=32)
     quantity: float = Field(description="Signed units held; negative is short")
     average_price: float | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, max_length=12, description="Currency of the average price")
 
     @field_validator("ticker")
     @classmethod
     def normalize_ticker(cls, value: str) -> str:
         return _compact_symbol(value)
+
+    @field_validator("currency")
+    @classmethod
+    def clean_currency(cls, value: str | None) -> str | None:
+        return _currency_label(value)
 
     @field_validator("quantity")
     @classmethod
@@ -283,12 +300,13 @@ class PortfolioWrite(BaseModel):
     cash: float | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, max_length=12)
     positions: list[PositionIn] = Field(default_factory=list, max_length=200)
+    # New analyses and backtests start on "decide against my book" when set.
+    use_by_default: bool = False
 
     @field_validator("currency")
     @classmethod
     def clean_currency(cls, value: str | None) -> str | None:
-        value = (value or "").strip().upper()
-        return value or None
+        return _currency_label(value)
 
     @field_validator("positions")
     @classmethod
@@ -306,6 +324,7 @@ class PortfolioOut(BaseModel):
     cash: float | None = None
     currency: str | None = None
     positions: list[PositionIn] = Field(default_factory=list)
+    use_by_default: bool = False
     updated_at: datetime | None = None
 
 

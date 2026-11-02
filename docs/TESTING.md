@@ -130,14 +130,17 @@ history is kept. For a throwaway database instead, use
    "Active AI provider & model defaults", choose **Claude plan**, pick models,
    and save.
 2. **Holdings.** Add a position or two (for example NVDA, quantity 120, average
-   price 150, and a short such as AAPL −10), set the free cash to 25000 and the
-   currency to USD, then press **Save holdings**. Each row gets its latest close
-   and unrealized P/L, and **What the agents read** shows the exact text the
-   decision agents will receive for the chosen ticker.
+   price 150; an ASX share such as NXT.AX, whose currency fills in as AUD; and a
+   short such as AAPL −10), set the free cash to 25000 and the cash currency,
+   keep **Use by default** ticked, then press **Save holdings**. Each row gets its
+   latest close and unrealized P/L in its own currency, and **What the agents
+   read** shows the exact text the decision agents will receive, e.g. "average
+   price 150.00 USD". Press **Export** to download the book; **Import** on another
+   console (Docker ↔ `make web-dev`) loads it there.
 3. **New analysis.** Choose provider **Claude plan**. For a cheap run, select
    only the Market analyst, Quick **Haiku 5.5**, Deep **Sonnet 5.5**, effort
-   **low**. Under **04 Portfolio context** choose **Decide against my book**; the
-   preview shows your book. The estimate card reads **Plan · billed**. Press
+   **low**. Under **04 Portfolio context**, **Decide against my book** is already
+   chosen (Use by default); the preview shows your book. The estimate card reads **Plan · billed**. Press
    **Run Analysis**.
 4. **Run view.** Sections appear as each agent finishes. Press **Stop**: the
    status becomes *stopped*. Press **Resume**: it continues from the last saved
@@ -169,32 +172,33 @@ backtest. Reports are saved under `reports/<run id>/`.
 
 ## B. With Docker
 
-### B1. Give the containers a Claude plan token
-
-Containers have no browser, so they use a long-lived token from Claude Code:
-
-```bash
-.venv/bin/tradingagents login claude --token     # runs `claude setup-token`
-```
-
-Sign in when the browser opens, copy the printed token and add it to `.env`:
-
-```
-CLAUDE_CODE_OAUTH_TOKEN=<the token>
-```
-
-You can instead paste it later in SignalDesk under Settings → Provider
-credentials → `CLAUDE_CODE_OAUTH_TOKEN`; it is stored encrypted.
-
-### B2. Rebuild and start SignalDesk with Claude Code inside
+### B1. Rebuild and start SignalDesk with Claude Code inside
 
 ```bash
 WITH_CLAUDE_CODE=1 docker compose up --build -d web-backend web-frontend
 ```
 
-This replaces the running containers with the new code (the build downloads
+This replaces the running containers with the new code (the first build downloads
 Claude Code, about 125 MB). Your history in the `research_console_data` volume is
-kept and migrated at start-up.
+kept and migrated at start-up. Without `WITH_CLAUDE_CODE=1` the image has no
+Claude Code and the Subscriptions card says so.
+
+### B2. Sign the container's Claude Code in, once
+
+Open http://127.0.0.1:4173 → **Settings → Subscriptions** (hard-refresh with
+Cmd+Shift+R the first time after a rebuild).
+
+1. On the **Claude Pro or Max** tile press **Sign in with Claude**.
+2. Press **Open claude.com sign-in**, approve with your Pro or Max account, and
+   copy the code claude.com shows.
+3. Paste it into the box and press **Finish sign-in**. The tile turns **Ready**
+   with your masked account and plan.
+4. Press **Make Claude the default provider** so New analysis and New backtest
+   start on the Claude plan.
+
+The sign-in is Claude Code's own and lives in the data volume, so it survives
+`docker compose down`, restarts and rebuilds; you don't repeat it. (Alternative:
+put a `claude setup-token` token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN`.)
 
 ### B3. Check it
 
@@ -204,9 +208,9 @@ curl -s http://127.0.0.1:8765/api/config/subscriptions/claude
 ```
 
 Expect `{"status":"ok","upstream":"TradingAgents v0.7.0"}`, then
-`"installed":true` with Claude Code's path and version, and `"ready":true` once
-the token is set. If you saved the token in Settings, press **Check again** on
-the Subscriptions card.
+`"installed":true` with Claude Code's path and version, and `"ready":true` with
+`"signed_in":true` after B2. Run `docker compose restart web-backend` and check
+again: it is still ready.
 
 Open http://127.0.0.1:4173 and repeat the walkthrough in A8.
 
@@ -234,7 +238,7 @@ The same `-e` options with `tradingagents backtest NVDA --start 2026-09-01 --end
 | --- | --- |
 | `make venv`: "needs 3.11 or later" | `rm -rf .venv && make install web-install` |
 | "Claude Code is not installed, or not on PATH" | install Claude Code, run `make install-claude`, or set `TRADINGAGENTS_CLAUDE_CLI` to its path; in Docker rebuild with `WITH_CLAUDE_CODE=1` |
-| "Claude Code is not signed in to a Claude plan" | `tradingagents login claude`; in Docker set `CLAUDE_CODE_OAUTH_TOKEN` |
+| "Claude Code is not signed in to a Claude plan" | Settings → Subscriptions → **Sign in with Claude** (works in Docker too), or `tradingagents login claude` in a terminal |
 | "signed in to Anthropic API billing, not a Claude plan" | Claude Code is logged in with a Console account: `claude auth login --claudeai` |
 | "Your Claude plan's usage limit is reached" | wait for the reset, then Resume the run or the backtest |
 | "Claude Code cannot use this model" | choose another model; your plan may not include it |

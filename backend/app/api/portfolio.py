@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from ...adapters.tradingagents_adapter import portfolio_context
 from ..schemas import PortfolioOut, PortfolioPreview, PortfolioQuote, PortfolioWrite
-from ..services.portfolio import clear_book, load_book, quotes, save_book
+from ..services.portfolio import clear_book, load_book, quotes, save_book, used_by_default
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 def _out(book: dict | None, updated_at) -> dict:
     if book is None:
         return {"configured": False, "positions": [], "updated_at": None}
-    return {"configured": True, **book, "updated_at": updated_at}
+    return {"configured": True, **book, "use_by_default": used_by_default(), "updated_at": updated_at}
 
 
 @router.get("", response_model=PortfolioOut)

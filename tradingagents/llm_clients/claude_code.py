@@ -9,8 +9,10 @@ empty working directory, so nothing from the person's coding setup reaches the
 prompt and nothing is left behind (no session is saved).
 
 Signing in is Claude Code's own: ``claude auth login`` opens claude.ai in a
-browser. A machine without a browser, such as a container, uses the long-lived
-token ``claude setup-token`` prints, set as ``CLAUDE_CODE_OAUTH_TOKEN``.
+browser. A machine without a browser, such as a container, can relay that login
+to a browser elsewhere (``start_browser_sign_in``: the web console's Sign in
+button), or use the long-lived token ``claude setup-token`` prints, set as
+``CLAUDE_CODE_OAUTH_TOKEN``.
 
 An Anthropic API key in the environment would make Claude Code bill the API
 instead of the plan, so it is never passed on; nor are the variables a parent
@@ -23,6 +25,7 @@ Anthropic does not allow plan access to be resold or shared.
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import importlib.util
 import json
@@ -304,6 +307,149 @@ def sign_out() -> bool:
         raise ClaudeCodeNotFound(f"Claude Code could not be started ({exc}). {INSTALL_HINT}") from None
     forget_status()
     return code == 0
+
+
+# --- signing in from a browser elsewhere ---------------------------------------------
+#
+# A container has no browser, but the person has one. `claude auth login` prints
+# the claude.com sign-in link and then asks for the code claude.com shows once the
+# person approves, so the web console starts it here, hands the link to the
+# browser and passes the code back. Claude Code keeps the resulting sign-in in its
+# own config directory (CLAUDE_CONFIG_DIR; a data volume in Docker) and refreshes
+# it itself: TradingAgents relays a one-time code and never sees a credential.
+
+LOGIN_WINDOW = 600.0                             # seconds a started sign-in waits for its code
+_LOGIN_URL = re.compile(r"https://\S+/oauth/authorize\?\S+")
+_ESCAPES = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+
+
+@dataclass
+class _Login:
+    process: subprocess.Popen
+    terminal: int
+    url: str
+    started: float
+    output: str = ""
+
+
+_login_lock = threading.Lock()
+_login: _Login | None = None
+
+
+def _plain(raw: bytes) -> str:
+    return _ESCAPES.sub("", raw.decode("utf-8", "replace")).replace("\r", "")
+
+
+def _read_terminal(terminal: int, until: float, done: Any) -> str:
+    """What the login prints until ``done(text)`` holds, the time is up or it exits."""
+    import select
+
+    text = ""
+    while time.monotonic() < until and not done(text):
+        ready, _, _ = select.select([terminal], [], [], 0.25)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(terminal, 65536)
+        except OSError:                          # the login exited and closed the terminal
+            break
+        if not chunk:
+            break
+        text += _plain(chunk)
+    return text
+
+
+def _end_login(login: _Login) -> None:
+    if login.process.poll() is None:
+        _kill(login.process)
+    with contextlib.suppress(OSError):
+        os.close(login.terminal)
+
+
+def cancel_browser_sign_in() -> None:
+    """Stop a sign-in that was started and not finished."""
+    global _login
+    with _login_lock:
+        if _login is not None:
+            _end_login(_login)
+            _login = None
+
+
+def start_browser_sign_in() -> str:
+    """Start Claude Code's login and return the claude.com link to approve it at.
+
+    Replaces any sign-in already waiting for its code. Raises ``ClaudeCodeError``
+    where a terminal cannot be emulated (Windows): sign in from a terminal there.
+    """
+    global _login
+    try:
+        import fcntl
+        import pty
+        import struct
+        import termios
+    except ImportError:
+        raise ClaudeCodeError("Sign in from a terminal on this machine: `tradingagents login claude`.") from None
+    cli = find_cli()
+    ensure_supported(cli)
+    with _login_lock:
+        if _login is not None:
+            _end_login(_login)
+            _login = None
+        terminal, child = pty.openpty()
+        # Wide enough that the link is printed on one line.
+        fcntl.ioctl(child, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 4000, 0, 0))
+        try:
+            process = subprocess.Popen(
+                [cli, "auth", "login", "--claudeai"], stdin=child, stdout=child, stderr=child,
+                env=cli_environment({"BROWSER": "true", "TERM": "dumb"}), cwd=_workdir(), start_new_session=True,
+            )
+        except OSError as exc:
+            os.close(terminal)
+            raise ClaudeCodeNotFound(f"Claude Code could not be started ({exc}). {INSTALL_HINT}") from None
+        finally:
+            os.close(child)
+        output = _read_terminal(terminal, time.monotonic() + 30, lambda text: "Paste code" in text)
+        match = _LOGIN_URL.search(output)
+        if not match:
+            if process.poll() is None:
+                _kill(process)
+            os.close(terminal)
+            last = next((line.strip() for line in reversed(output.splitlines()) if line.strip()), "")
+            raise ClaudeSignInError(f"Claude Code did not offer a sign-in link{f': {last}' if last else '.'}")
+        _login = _Login(process, terminal, match.group(0), time.monotonic(), output)
+        return _login.url
+
+
+def finish_browser_sign_in(code: str) -> dict:
+    """Give Claude Code the code claude.com showed; returns the resulting sign-in status."""
+    global _login
+    code = code.strip()
+    if not code or any(ch.isspace() for ch in code):
+        raise ClaudeSignInError("Paste the whole code claude.com showed, with nothing else.")
+    with _login_lock:
+        login = _login
+        if login is None or login.process.poll() is not None or time.monotonic() - login.started > LOGIN_WINDOW:
+            if login is not None:
+                _end_login(login)
+                _login = None
+            raise ClaudeSignInError("This sign-in has expired; start it again.")
+        os.write(login.terminal, code.encode() + b"\r")
+        output = _read_terminal(login.terminal, time.monotonic() + 60, lambda _text: login.process.poll() is not None)
+        try:
+            exit_code = login.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            exit_code = None
+        _end_login(login)
+        _login = None
+    forget_status()
+    status = auth_status(fresh=True)
+    if exit_code == 0 and on_plan(status):
+        return status
+    if exit_code == 0 and status.get("loggedIn"):
+        raise ClaudeSignInError("That account signed Claude Code in to API billing, not a Claude Pro or Max plan.")
+    reason = next((line.strip() for line in reversed(output.splitlines())
+                   if line.strip() and "Paste code" not in line), "")
+    raise ClaudeSignInError(f"Claude Code did not accept the code{f' ({reason})' if reason else ''}; start the sign-in again.")
 
 
 # --- one call --------------------------------------------------------------------------

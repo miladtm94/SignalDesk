@@ -27,8 +27,10 @@ Verify an item still applies before acting on it; strike it here when fixed.
    `WITH_CLAUDE_CODE=1` and a `CLAUDE_CODE_OAUTH_TOKEN` for the Claude plan).
 6. **Backtests run one cell at a time**, and each cell is a full run (2–5 min).
    Capped at 60 cells. No export, no comparison between sweeps.
-7. **Holdings is a single book**; P/L is per instrument in its own quote
-   currency (no FX conversion, no totals); quotes are fetched one ticker at a time.
+7. **Holdings is a single book per console** (Docker and `make web-dev` keep
+   separate databases; Export/Import moves it). Each position has a currency;
+   P/L is per instrument in that currency (no FX conversion, no totals); quotes
+   are fetched one ticker at a time (12 holdings take ~20 s).
 8. **Usage cost is a midpoint estimate** across quick/deep models (callbacks do
    not say which tier made a call).
 9. **The ChatGPT plan's models** are "Custom model ID" only in the console; the

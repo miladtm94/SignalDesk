@@ -4,9 +4,17 @@ from fastapi import APIRouter, HTTPException, Response, status
 
 from ..database import SessionLocal
 from ..models import AppPreference
-from ..schemas import PreferencesWrite, SecretMask, SecretWrite
+from ..schemas import PreferencesWrite, SecretMask, SecretWrite, SignInCode
 from ..services.costs import public_cost_table
-from ..services.providers import get_provider_configuration, get_vendor_configuration, plan_status
+from ..services.providers import (
+    PlanSignInError,
+    claude_sign_in_cancel,
+    claude_sign_in_finish,
+    claude_sign_in_start,
+    get_provider_configuration,
+    get_vendor_configuration,
+    plan_status,
+)
 from ..services.secrets import secret_store
 from ..settings import DATA_DIR
 
@@ -25,6 +33,30 @@ def subscription(provider: str, fresh: bool = True):
     if provider not in PLAN_PROVIDERS:
         raise HTTPException(status_code=404, detail="Not a plan provider")
     return plan_status(provider, fresh=fresh)
+
+
+@router.post("/subscriptions/claude/sign-in")
+def start_claude_sign_in():
+    """Start Claude Code's login on this backend; returns the claude.com link to approve."""
+    try:
+        return claude_sign_in_start()
+    except PlanSignInError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+
+@router.post("/subscriptions/claude/sign-in/code")
+def finish_claude_sign_in(payload: SignInCode):
+    """Hand the code claude.com showed to the waiting login; returns the plan status."""
+    try:
+        return claude_sign_in_finish(payload.code)
+    except PlanSignInError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.delete("/subscriptions/claude/sign-in", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_claude_sign_in():
+    claude_sign_in_cancel()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/vendors")

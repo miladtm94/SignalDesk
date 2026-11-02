@@ -180,3 +180,44 @@ html{font-size:16px}.app-shell{padding-bottom:52px}.sidebar{bottom:52px;width:25
 .section-tab .section-icon,.report-heading .section-icon,.comparison-label .section-icon{display:inline;font-size:inherit;text-transform:none;letter-spacing:0;color:inherit;margin:0 .4em 0 0}
 .report-field>.report-field-label+*{margin-top:0}.report-field>:last-child{margin-bottom:0}
 .report-field>ul,.report-field>ol{margin-bottom:4px}
+
+/* Claude sign-in from the browser (ClaudeSignIn, DefaultPlanButton in App.tsx). */
+.plan-signin{display:grid;gap:8px;margin:4px 0 12px}
+.plan-signin>.primary-button{justify-self:start}
+.plan-signin.waiting{background:#fff;border:1px solid #dfe3db;border-radius:9px;padding:12px 13px}
+.plan-signin.waiting ol{margin:0;padding-left:20px;display:grid;gap:12px;font-size:13px}
+.plan-signin.waiting li>span{display:block;margin-bottom:7px;color:#34433e;font-weight:600}
+.plan-signin.waiting .secondary-button{display:inline-flex;text-decoration:none;height:36px}
+.plan-code{display:flex;gap:7px;flex-wrap:wrap}
+.plan-code input{flex:1 1 220px;min-width:0;height:38px;border:1px solid #cfd6cd;border-radius:7px;padding:0 10px;font:500 12px DM Mono,monospace;background:#fbfcfa}
+.plan-code input:focus{outline:2px solid #9fbbae;outline-offset:1px}
+.plan-code .primary-button{height:38px}
+.plan-signin .link-button{justify-self:start;color:#6b7873;font-weight:600}
+.plan-signin .form-error,.plan-default .form-error{margin:0}
+.plan-default{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0 12px;font-size:12px;color:#3f6457}
+.plan-tile p.plan-default{margin:4px 0 12px;font-size:12px;color:#3f6457}
+.plan-alternatives{margin:0 0 10px;font-size:12px;color:#6b7873}
+.plan-alternatives summary{cursor:pointer;font-weight:600;margin-bottom:6px}
+
+/* Holdings: per-position currency, the launch default, import/export. */
+.holdings-table .currency-input{min-width:68px;width:76px;text-transform:uppercase}
+.holdings-table .currency-input::placeholder{color:#9aa7a1}
+.holdings-table small.unit{display:inline;font:600 10px Manrope;color:#7d8a85;letter-spacing:.04em;margin:0}
+.holdings-footer .default-toggle{display:flex;align-items:flex-start;gap:9px;padding:9px 11px;border:1px solid #d8dcd4;border-radius:8px;background:#fff;cursor:pointer;min-height:42px}
+.holdings-footer .default-toggle input{width:16px;height:16px;margin-top:2px;accent-color:#1e5143;flex:none}
+.holdings-footer .default-toggle span{display:grid;gap:2px}
+.holdings-footer .default-toggle strong{font-size:13px;color:#22352f}
+.holdings-footer .default-toggle small{font-size:11px;line-height:1.4;color:#76837e}
+.holdings-footer .holdings-actions{grid-column:1/-1}
+.table-toolbar .filter:disabled{opacity:.5;cursor:not-allowed}
+.book-rules code{font:500 11px DM Mono,monospace;background:#e8ede9;border-radius:4px;padding:1px 4px}
+@media(max-width:650px){.holdings-footer .default-toggle{grid-column:1/-1}}
+.holdings-footer .default-toggle span,.holdings-footer .default-toggle strong,.holdings-footer .default-toggle small{text-transform:none;letter-spacing:0;font-family:Manrope,sans-serif}
+.holdings-table th,.holdings-table td{padding-left:8px;padding-right:8px}
+.holdings-table th{white-space:nowrap}
+.holdings-table .cell-input{min-width:0}
+.holdings-table .ticker-input{width:104px}
+.holdings-table td:nth-child(2) .cell-input{width:86px}
+.holdings-table td:nth-child(3) .cell-input{width:92px}
+.holdings-table .currency-input{width:62px;min-width:0}
+.holdings-table .row-tools{white-space:nowrap}

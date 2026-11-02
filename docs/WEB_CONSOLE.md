@@ -52,10 +52,16 @@ records what its tokens would have cost at API list prices.
   Agent SDK's (`make install-claude`) are found automatically. Install the SDK
   only through that target: on its own, `pip install ".[claude]"` lets its `mcp`
   dependency upgrade Starlette past what the console's pinned FastAPI supports.
-- **In Docker.** Build with `WITH_CLAUDE_CODE=1 docker compose build web-backend`
-  to add Claude Code to the image, run `claude setup-token` on a machine where you
-  can sign in, and save the token in Settings → Provider credentials as
-  `CLAUDE_CODE_OAUTH_TOKEN` (or put it in `.env`).
+- **In Docker.** Build with `WITH_CLAUDE_CODE=1 docker compose up --build -d
+  web-backend web-frontend` to add Claude Code to the image. Then, in Settings →
+  Subscriptions, press **Sign in with Claude**, approve on claude.com, and paste
+  the code claude.com shows. This is Claude Code's own login running in the
+  container: it keeps and refreshes the sign-in in the data volume
+  (`CLAUDE_CONFIG_DIR`), so it lasts across restarts and rebuilds, and the console
+  only passes on the one-time code. Press **Make Claude the default provider** to
+  start every new analysis and backtest on it. Alternatively, save a `claude
+  setup-token` token as `CLAUDE_CODE_OAUTH_TOKEN` in Settings → Provider
+  credentials or `.env`.
 - **ChatGPT Plus or Pro.** Sign in with `tradingagents login chatgpt` on the
   backend's machine.
 
@@ -65,9 +71,20 @@ be shared or resold, so do not expose a plan-backed console to other people.
 ## Holdings
 
 The Holdings page keeps one book: positions (signed quantities, negative for a
-short, with an optional average price in the instrument's quote currency), free
-cash and a currency label. It shows each holding's latest close and unrealized
-P/L, and exactly what the decision agents will read for any ticker.
+short, with an optional average price and the currency it is in), free cash
+and the cash currency. A position's currency is filled in from its ticker's
+exchange (NVDA in USD, NXT.AX in AUD) and can be changed; the agents read it
+("average price 180.00 USD", plus a note when it differs from the cash
+currency). The page shows each holding's latest close and unrealized P/L in that
+currency, and exactly what the decision agents will read for any ticker.
+
+The book is saved in the console's database and kept for every later session.
+With **Use by default** on (the default for a new book), New analysis and New
+backtest start on "Decide against my book"; each launch can still switch to no
+portfolio context. Each console keeps its own database (the Docker console in
+its data volume, `make web-dev` in `backend/data/`), so **Export** downloads the
+book as a JSON file and **Import** loads one into the editor (press Save to keep
+it). The same file works with the CLI's `--portfolio`.
 
 Choosing "Decide against my book" when launching an analysis or a backtest
 gives the book to the trader, the risk analysts and the portfolio manager; the

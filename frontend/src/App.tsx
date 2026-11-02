@@ -225,13 +225,52 @@ function PlanSettings({ revision, onChange }: { revision: number; onChange: () =
       <article className={`plan-tile ${claude?.ready ? "ready" : ""}`}><div className="plan-head"><i /><strong>Claude Pro or Max</strong><span>{claude ? (claude.ready ? "Ready" : claude.installed ? "Sign-in needed" : "Claude Code needed") : "Checking…"}</span></div>
         <p>{claude?.message ?? "Asking Claude Code…"}{claude?.account ? ` · ${claude.account}` : ""}</p>
         {claude?.installed && <dl><div><dt>Claude Code</dt><dd>{claude.version ? `v${claude.version}` : "installed"}</dd></div><div><dt>Executable</dt><dd title={claude.cli_path}>{claude.cli_path?.split("/").slice(-4).join("/")}</dd></div></dl>}
-        {!claude?.ready && <ol><li>Install Claude Code, or set <code>TRADINGAGENTS_CLAUDE_CLI</code> to its path.</li><li>In a terminal on this machine run <code>{claude?.login_command ?? "tradingagents login claude"}</code> and sign in with your Claude subscription.</li><li>For a container, run <code>claude setup-token</code> on a machine with a browser and save the token below as <code>CLAUDE_CODE_OAUTH_TOKEN</code>.</li></ol>}
+        {claude?.installed && !claude.ready && <ClaudeSignIn onSignedIn={check} />}
+        {claude?.ready && <DefaultPlanButton provider="claude" label="Claude" onSaved={check} />}
+        {claude && !claude.installed && <ol><li>Install Claude Code, or set <code>TRADINGAGENTS_CLAUDE_CLI</code> to its path. In Docker, rebuild with <code>WITH_CLAUDE_CODE=1</code>.</li><li>Then press <strong>Check again</strong> and sign in here.</li></ol>}
+        {claude?.installed && !claude.ready && <details className="plan-alternatives"><summary>Other ways to sign in</summary><ol><li>In a terminal on this machine run <code>{claude.login_command ?? "tradingagents login claude"}</code>.</li><li>Or run <code>claude setup-token</code> on a machine with a browser and save the token below as <code>CLAUDE_CODE_OAUTH_TOKEN</code>.</li></ol></details>}
         <small><Terminal size={11} /> Every call runs through your own Claude Code; Signal Desk never reads your Claude credentials. For personal use on your own machine: Anthropic does not allow plan access to be shared or resold.</small></article>
       <article className={`plan-tile ${chatgpt?.ready ? "ready" : ""}`}><div className="plan-head"><i /><strong>ChatGPT Plus or Pro</strong><span>{chatgpt ? (chatgpt.ready ? "Ready" : "Sign-in needed") : "Checking…"}</span></div>
         <p>{chatgpt?.message ?? "Checking…"}{chatgpt?.account ? ` · ${chatgpt.account}` : ""}</p>
         {!chatgpt?.ready && <ol><li>In a terminal run <code>{chatgpt?.login_command ?? "tradingagents login chatgpt"}</code> and approve plan usage.</li><li>Choose it below as the active provider.</li></ol>}
         <small><Terminal size={11} /> The sign-in lives in ~/.tradingagents/chatgpt-auth.json on this machine.</small></article>
     </div></section>;
+}
+
+// Signs this backend's Claude Code in with its own login: the person approves on
+// claude.com in this browser and pastes back the code it shows. Claude Code keeps
+// the sign-in (in Docker, in the data volume), so it lasts across restarts.
+function ClaudeSignIn({ onSignedIn }: { onSignedIn: () => void }) {
+  const [link, setLink] = useState<string | null>(null), [code, setCode] = useState(""), [busy, setBusy] = useState<"start" | "finish" | null>(null), [error, setError] = useState("");
+  const fail = (reason: unknown) => setError(reason instanceof Error ? reason.message : "That did not work.");
+  const start = () => { setBusy("start"); setError(""); setCode(""); api.startClaudeSignIn().then(({ url }) => setLink(url)).catch(fail).finally(() => setBusy(null)); };
+  const finish = () => { setBusy("finish"); setError(""); api.finishClaudeSignIn(code.trim()).then(() => { setLink(null); onSignedIn(); }).catch((reason) => { fail(reason); setLink(null); }).finally(() => setBusy(null)); };
+  const cancel = () => { api.cancelClaudeSignIn().catch(() => undefined); setLink(null); setCode(""); setError(""); };
+  if (!link) return <div className="plan-signin"><button className="primary-button" onClick={start} disabled={busy !== null}>{busy === "start" ? <RefreshCw className="spin" size={14} /> : <KeyRound size={14} />} {busy === "start" ? "Starting Claude Code's sign-in…" : "Sign in with Claude"}</button>{error && <p className="form-error">{error}</p>}<small>Signs in this console's own Claude Code, once: the sign-in is kept and refreshed by Claude Code across restarts.</small></div>;
+  return <div className="plan-signin waiting">
+    <ol>
+      <li><span>Approve on claude.com with your Pro or Max account.</span><a className="secondary-button" href={link} target="_blank" rel="noreferrer noopener">Open claude.com sign-in <ArrowRight size={13} /></a></li>
+      <li><span>Paste the code claude.com shows, then finish.</span><div className="plan-code"><input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && code.trim()) finish(); }} placeholder="Paste the code here" autoComplete="off" spellCheck={false} aria-label="Sign-in code from claude.com" /><button className="primary-button" onClick={finish} disabled={!code.trim() || busy !== null}>{busy === "finish" ? <RefreshCw className="spin" size={14} /> : <Check size={14} />} {busy === "finish" ? "Signing in…" : "Finish sign-in"}</button></div></li>
+    </ol>
+    {error && <p className="form-error">{error}</p>}
+    <button className="link-button" onClick={cancel} disabled={busy === "finish"}>Cancel</button>
+  </div>;
+}
+
+// Saves a ready plan as the active provider, with the catalog's first models, so
+// new analyses and backtests start on it in every later session.
+function DefaultPlanButton({ provider, label, onSaved }: { provider: string; label: string; onSaved: () => void }) {
+  const [prefs, setPrefs] = useState<Preferences | null>(null), [message, setMessage] = useState("");
+  useEffect(() => { api.preferences().then(setPrefs).catch(() => setPrefs(null)); }, []);
+  if (!prefs) return null;
+  if (prefs.llm_provider === provider) return <p className="plan-default"><Check size={13} /> {label} is the default provider for new analyses and backtests.</p>;
+  const save = () => api.providers(true).then((catalog) => {
+    const entry = catalog.providers.find((item) => item.id === provider);
+    if (!entry?.configured) throw new Error(`${label} is not ready yet; press Check again.`);
+    const next = { ...prefs, llm_provider: provider, quick_think_llm: entry.quick_models[0]?.value ?? null, deep_think_llm: entry.deep_models[0]?.value ?? null };
+    return api.savePreferences(next).then((value) => { setPrefs(value); onSaved(); });
+  }).catch((error) => setMessage(error instanceof Error ? error.message : "The default could not be saved."));
+  return <div className="plan-default"><button className="secondary-button" onClick={save}><Star size={13} /> Make {label} the default provider</button>{message && <p className="form-error">{message}</p>}</div>;
 }
 
 function PresetSettings({ revision }: { revision: number }) {

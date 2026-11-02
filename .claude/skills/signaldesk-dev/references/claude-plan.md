@@ -108,7 +108,18 @@ upgrades Starlette to 1.x and the pinned FastAPI 0.115.6 crashes at import
 - Local: `tradingagents login claude` → `claude auth login --claudeai` (browser).
   Status: `claude auth status --json` (`loggedIn`, `authMethod` — `claude.ai` for
   a plan; API-billing methods are refused — `email`, `subscriptionType`).
-- Headless/Docker: `claude setup-token` on a machine with a browser (or
+- From the browser (the Docker route): Settings → **Sign in with Claude**.
+  `claude_code.start_browser_sign_in()` runs `claude auth login --claudeai` on a
+  pty (wide, so the link is one line; `BROWSER=true`), returns the
+  `…/oauth/authorize?code=true…` link it prints; `finish_browser_sign_in(code)`
+  types the pasted code + CR, waits for exit, then checks `on_plan`. One pending
+  login per process (`_login`, `LOGIN_WINDOW` 600 s; a new start replaces it).
+  Claude Code stores and refreshes the credential in `CLAUDE_CONFIG_DIR` (the data
+  volume in Docker), so it survives rebuilds; the console never sees a token.
+  Endpoints: `POST/DELETE /api/config/subscriptions/claude/sign-in`, `POST
+  …/sign-in/code`. POSIX only (Windows: terminal login). Tests drive the fake CLI
+  on a real pty (`test_a_browser_sign_in_*`).
+- Headless/Docker alternative: `claude setup-token` on a machine with a browser (or
   `tradingagents login claude --token`); set `CLAUDE_CODE_OAUTH_TOKEN` in `.env` or
   SignalDesk Settings → Provider credentials. A token in the environment is
   trusted by `require_plan`; the first call reports a bad one.

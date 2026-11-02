@@ -45,6 +45,24 @@ export function formatPercent(value: number | null | undefined) {
 export function formatNumber(value: number | null | undefined, digits = 2) {
   return value === null || value === undefined ? "—" : value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
+// The currency an exchange suffix quotes in (Yahoo symbols): NXT.AX is AUD, a bare
+// symbol is a US listing. Only a suggestion; the person can type another.
+const SUFFIX_CURRENCY: Record<string, string> = {
+  AX: "AUD", NZ: "NZD", TO: "CAD", V: "CAD", NE: "CAD", L: "GBP", IL: "USD", HK: "HKD", T: "JPY", SS: "CNY", SZ: "CNY",
+  KS: "KRW", KQ: "KRW", TW: "TWD", TWO: "TWD", SI: "SGD", NS: "INR", BO: "INR", JK: "IDR", BK: "THB", KL: "MYR",
+  DE: "EUR", F: "EUR", PA: "EUR", AS: "EUR", BR: "EUR", MI: "EUR", MC: "EUR", LS: "EUR", VI: "EUR", HE: "EUR", IR: "EUR",
+  SW: "CHF", ST: "SEK", OL: "NOK", CO: "DKK", WA: "PLN", SA: "BRL", MX: "MXN", JO: "ZAR", TA: "ILS", SR: "SAR",
+};
+
+export function quoteCurrency(ticker: string): string {
+  const symbol = ticker.trim().toUpperCase();
+  if (!symbol) return "";
+  const pair = /^[A-Z0-9]+-([A-Z]{3,4})$/.exec(symbol);           // BTC-USD, ETH-AUD
+  if (pair) return pair[1] === "USDT" || pair[1] === "USDC" ? "USD" : pair[1];
+  const suffix = symbol.includes(".") ? symbol.split(".").pop()! : "";
+  return suffix ? SUFFIX_CURRENCY[suffix] ?? "" : "USD";
+}
+
 export function ratingTone(rating?: string | null) {
   if (["Buy", "Overweight"].includes(rating ?? "")) return "positive";
   if (["Sell", "Underweight"].includes(rating ?? "")) return "negative";

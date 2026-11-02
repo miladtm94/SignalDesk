@@ -38,6 +38,23 @@ FAKE = textwrap.dedent('''\
     if args[:2] == ["auth", "status"]:
         print(open(os.path.join(state, "status")).read())
         sys.exit(0)
+    if args[:2] == ["auth", "login"] and sys.stdin.isatty():
+        # Like the real login on a terminal without a browser: the link, then the code.
+        print("Opening browser to sign in...")
+        print("If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=s1")
+        sys.stdout.write("Paste code here if prompted > ")
+        sys.stdout.flush()
+        code = sys.stdin.readline().strip()
+        with open(os.path.join(state, "commands"), "a") as f:
+            f.write(json.dumps(args + [code]) + "\\n")
+        accounts = {"good#s1": {"loggedIn": True, "authMethod": "claude.ai", "email": "c@example.com", "subscriptionType": "max"},
+                    "api#s1": {"loggedIn": True, "authMethod": "console", "email": "c@example.com"}}
+        if code not in accounts:
+            print("Login failed: Request failed with status code 400")
+            sys.exit(1)
+        open(os.path.join(state, "status"), "w").write(json.dumps(accounts[code]))
+        print("Login successful.")
+        sys.exit(0)
     if args[:2] == ["auth", "login"] or args[:2] == ["auth", "logout"] or args[:1] == ["setup-token"]:
         with open(os.path.join(state, "commands"), "a") as f:
             f.write(json.dumps(args) + "\\n")
@@ -386,6 +403,84 @@ def test_a_named_executable_that_is_not_there_is_reported(monkeypatch, tmp_path)
     monkeypatch.setenv(claude_code.CLI_ENV, str(tmp_path / "missing" / "claude"))
     with pytest.raises(claude_code.ClaudeCodeNotFound, match=claude_code.CLI_ENV):
         claude_code.find_cli()
+
+
+needs_pty = pytest.mark.skipif(sys.platform == "win32", reason="the browser sign-in drives a POSIX terminal")
+
+
+@pytest.fixture
+def browser_login(fake):
+    fake.signed_in({"loggedIn": False})
+    yield fake
+    claude_code.cancel_browser_sign_in()
+
+
+@pytest.mark.unit
+@needs_pty
+def test_a_browser_sign_in_relays_the_code_to_claude_code_s_own_login(browser_login):
+    url = claude_code.start_browser_sign_in()
+    assert url == "https://claude.com/cai/oauth/authorize?code=true&state=s1"
+
+    status = claude_code.finish_browser_sign_in("  good#s1\n")
+
+    assert claude_code.on_plan(status) and status["email"] == "c@example.com"
+    assert browser_login.commands() == [["auth", "login", "--claudeai", "good#s1"]]
+    assert claude_code._login is None
+
+
+@pytest.mark.unit
+@needs_pty
+def test_a_rejected_code_says_why_and_needs_a_new_sign_in(browser_login):
+    claude_code.start_browser_sign_in()
+
+    with pytest.raises(claude_code.ClaudeSignInError, match="status code 400"):
+        claude_code.finish_browser_sign_in("wrong#s1")
+    with pytest.raises(claude_code.ClaudeSignInError, match="expired"):
+        claude_code.finish_browser_sign_in("good#s1")
+    assert not claude_code.on_plan(claude_code.auth_status(fresh=True))
+
+
+@pytest.mark.unit
+@needs_pty
+def test_an_api_billing_account_is_not_taken_for_a_plan(browser_login):
+    claude_code.start_browser_sign_in()
+
+    with pytest.raises(claude_code.ClaudeSignInError, match="API billing"):
+        claude_code.finish_browser_sign_in("api#s1")
+
+
+@pytest.mark.unit
+@needs_pty
+def test_a_code_is_checked_before_it_is_sent(browser_login):
+    with pytest.raises(claude_code.ClaudeSignInError, match="expired"):
+        claude_code.finish_browser_sign_in("good#s1")       # nothing started
+    claude_code.start_browser_sign_in()
+    with pytest.raises(claude_code.ClaudeSignInError, match="whole code"):
+        claude_code.finish_browser_sign_in("good #s1")
+    assert claude_code.finish_browser_sign_in("good#s1")["loggedIn"]
+
+
+@pytest.mark.unit
+@needs_pty
+def test_starting_again_replaces_the_waiting_sign_in(browser_login):
+    claude_code.start_browser_sign_in()
+    first = claude_code._login.process
+    claude_code.start_browser_sign_in()
+
+    assert first.poll() is not None
+    assert claude_code.finish_browser_sign_in("good#s1")["loggedIn"]
+    assert browser_login.commands() == [["auth", "login", "--claudeai", "good#s1"]]
+
+
+@pytest.mark.unit
+@needs_pty
+def test_a_sign_in_left_waiting_too_long_expires(browser_login, monkeypatch):
+    claude_code.start_browser_sign_in()
+    monkeypatch.setattr(claude_code, "LOGIN_WINDOW", 0.0)
+
+    with pytest.raises(claude_code.ClaudeSignInError, match="expired"):
+        claude_code.finish_browser_sign_in("good#s1")
+    assert claude_code._login is None
 
 
 @pytest.mark.unit

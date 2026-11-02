@@ -59,7 +59,11 @@ Expect merge conflicts here; keep both sides.
    structured decision persistence without parsing rendered markdown.
 5. Inspect `TradingAgentsGraph`, `Propagator`, `stream_run`, the checkpointer,
    `tradingagents/backtest.py`, `tradingagents/portfolio.py` and
-   `tradingagents/memory/`. Keep version-sensitive calls inside the adapter and
+   `tradingagents/memory/`. `ConsolePortfolio` (adapter) subclasses upstream's
+   `PortfolioContext`/`Position` and edits the `", average price {:,.2f}"` text of
+   its `render`; if upstream changes that wording or starts calling more than
+   `render`/`fingerprint`, update it (the holdings tests fail when it no longer
+   applies). Keep version-sensitive calls inside the adapter and
    prefer the graph's public lifecycle helpers over assembling state manually.
 6. Diff the LLM client registry (`factory.py`, `openai_client.py`'s
    `SIGNED_IN_PROVIDERS`) and the CLI provider menu; keep `claude` registered.

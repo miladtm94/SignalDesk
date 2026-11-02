@@ -192,9 +192,11 @@ export type RunPayload = {
   use_portfolio: boolean;
 };
 
-export type Position = { ticker: string; quantity: number; average_price: number | null };
-export type Portfolio = { cash: number | null; currency: string | null; positions: Position[] };
-export type SavedPortfolio = Portfolio & { configured: boolean; updated_at: string | null };
+// currency: what the average price is in (USD for NVDA, AUD for NXT.AX); the book's own currency labels the cash.
+export type Position = { ticker: string; quantity: number; average_price: number | null; currency?: string | null };
+// use_by_default: new analyses and backtests start on deciding against this book.
+export type Portfolio = { cash: number | null; currency: string | null; positions: Position[]; use_by_default?: boolean };
+export type SavedPortfolio = Portfolio & { configured: boolean; use_by_default: boolean; updated_at: string | null };
 export type PortfolioPreview = { ticker: string; held: Position | null; context: string };
 export type Quote = { ticker: string; last_close: number | null; as_of: string | null; error: string | null };
 
@@ -283,6 +285,10 @@ export const api = {
   vendors: () => request<{ vendors: Record<string, string> }>("/api/config/vendors"),
   costs: () => request<{ prices: Record<string, { input: number; output: number }>; plan_billed_providers: string[] }>("/api/config/costs"),
   subscription: (provider: string) => request<Subscription>(`/api/config/subscriptions/${provider}?fresh=true`),
+  // Claude Code's own login, run by the backend for a browser elsewhere (a container has none).
+  startClaudeSignIn: () => request<{ url: string; expires_in: number }>("/api/config/subscriptions/claude/sign-in", { method: "POST" }),
+  finishClaudeSignIn: (code: string) => request<Subscription>("/api/config/subscriptions/claude/sign-in/code", { method: "POST", body: JSON.stringify({ code }) }),
+  cancelClaudeSignIn: () => request<void>("/api/config/subscriptions/claude/sign-in", { method: "DELETE" }),
   runtime: () => request<{ data_directory: string; localhost_only: boolean }>("/api/config/runtime"),
   preferences: () => request<Preferences>("/api/config/preferences"),
   savePreferences: (value: Preferences) => request<Preferences>("/api/config/preferences", { method: "PUT", body: JSON.stringify(value) }),

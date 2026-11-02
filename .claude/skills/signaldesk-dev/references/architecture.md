@@ -162,7 +162,14 @@ missing indexes.
   banner), `StrategyChart`, `CompareRuns`, `SettingsView` + `PlanSettings` +
   `PresetSettings`. Launch intents (`analyzeWithBook`) prefill New analysis.
 - `Backtests.tsx` — `BacktestsView`, `NewBacktest`, `BacktestView`, `CellDetail`.
-- `Holdings.tsx` — `HoldingsView`, `AgentView`, `PortfolioPicker`, `BookCard`.
+- `Holdings.tsx` — `HoldingsView` (editor with per-position currency from
+  `shared.quoteCurrency()` suffix map, **Use by default**, Export/Import JSON in
+  the CLI `--portfolio` format), `AgentView`, `PortfolioPicker` (starts on the
+  book when `use_by_default` and the person has not picked), `BookCard`. The
+  book row is `AppPreference("portfolio") = {"book": …, "use_by_default": bool}`;
+  the run snapshot is the book alone. `ConsolePortfolio` (adapter) adds
+  `Position.currency` and renders it; without currencies it renders and
+  fingerprints exactly as upstream's `PortfolioContext`.
 - `ModelSetup.tsx` — `loadModelDefaults`, `estimateRunCost`, `ModelSetup`.
 - `Report.tsx` — `Report`, the one renderer for agent markdown (run view and
   compare view). `react-markdown` + `remark-gfm` (tables) + a local rehype pass

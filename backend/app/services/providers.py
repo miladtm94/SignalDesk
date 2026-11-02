@@ -5,10 +5,19 @@ from typing import Any
 
 from backend.adapters.tradingagents_adapter import (
     PLAN_PROVIDERS,
+    PlanSignInError,
     chatgpt_plan_status,
     claude_plan_status,
+    claude_sign_in_cancel,
+    claude_sign_in_finish,
+    claude_sign_in_start,
     upstream_catalog,
 )
+
+__all__ = [
+    "PlanSignInError", "claude_sign_in_cancel", "claude_sign_in_finish", "claude_sign_in_start",
+    "get_provider_configuration", "get_vendor_configuration", "plan_status",
+]
 
 
 def plan_status(provider: str, fresh: bool = False) -> dict[str, Any]:

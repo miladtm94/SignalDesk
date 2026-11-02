@@ -20,7 +20,7 @@ from typing import Any
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS, RESULTS_DIR
 from tradingagents.agents.rating import run_rating
@@ -40,7 +40,7 @@ from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
 from tradingagents.memory import TradingMemoryLog
 from tradingagents.memory.settlement import resolve_benchmark
 from tradingagents.output_languages import OUTPUT_LANGUAGE_OPTIONS
-from tradingagents.portfolio import PortfolioContext
+from tradingagents.portfolio import PortfolioContext, Position
 
 logger = logging.getLogger(__name__)
 
@@ -383,10 +383,44 @@ def _build_config(
 # --- the caller's book --------------------------------------------------------------
 
 
+class ConsolePosition(Position):
+    currency: str | None = Field(default=None, description="Currency of the average price, e.g. USD or AUD")
+
+
+class ConsolePortfolio(PortfolioContext):
+    """Upstream's book, with the currency of each position's average price.
+
+    A mixed book (US shares bought in USD, ASX shares in AUD, cash in AUD) would
+    otherwise reach the agents as bare prices beside one currency label. Upstream
+    only calls ``render`` and ``fingerprint`` on the book, so this subclass changes
+    what the agents read without touching upstream; a book without position
+    currencies renders and fingerprints exactly as upstream's does.
+    """
+
+    positions: list[ConsolePosition] = Field(default_factory=list)
+
+    def render(self, ticker: str) -> str:
+        text = super().render(ticker)
+        held = self.position_in(ticker)
+        if held is None or not held.currency or held.average_price is None:
+            return text
+        price = f", average price {held.average_price:,.2f}"
+        text = text.replace(price, f"{price} {held.currency}", 1)
+        if self.currency and held.currency != self.currency:
+            text += f"\n- The average price is in {held.currency}; cash is in {self.currency}."
+        return text
+
+    def fingerprint(self) -> str:
+        if any(p.currency for p in self.positions):
+            return super().fingerprint()
+        # Unchanged for a book saved before positions had a currency, so its runs resume.
+        return PortfolioContext.model_validate(self.model_dump(exclude={"positions": {"__all__": {"currency"}}})).fingerprint()
+
+
 def normalize_portfolio(data: dict[str, Any]) -> dict[str, Any]:
     """The book as upstream reads it; raises ValueError naming what is wrong."""
     try:
-        return PortfolioContext.model_validate(data).model_dump(mode="json")
+        return ConsolePortfolio.model_validate(data).model_dump(mode="json")
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
 
@@ -394,7 +428,7 @@ def normalize_portfolio(data: dict[str, Any]) -> dict[str, Any]:
 def _portfolio(snapshot: dict[str, Any] | None) -> PortfolioContext | None:
     # None is "no portfolio context", which upstream keeps distinct from a flat
     # book (a snapshot whose positions list is empty).
-    return None if snapshot is None else PortfolioContext.model_validate(snapshot)
+    return None if snapshot is None else ConsolePortfolio.model_validate(snapshot)
 
 
 def portfolio_context(snapshot: dict[str, Any] | None, ticker: str) -> str | None:
@@ -574,6 +608,38 @@ def claude_plan_status(fresh: bool = False) -> dict[str, Any]:
         "plan": status.get("subscriptionType"),
         "message": message,
     }
+
+
+class PlanSignInError(RuntimeError):
+    """A sign-in to a plan that could not be started or finished; the message says why."""
+
+
+def claude_sign_in_start() -> dict[str, Any]:
+    """Start Claude Code's own login here and return the claude.com link to approve it at.
+
+    For a backend without a browser (a container): the person opens the link in
+    theirs and pastes back the code claude.com shows. Claude Code keeps the
+    sign-in in its config directory and refreshes it; the console relays the
+    one-time code only.
+    """
+    try:
+        url = claude_code.start_browser_sign_in()
+    except claude_code.ClaudeCodeError as exc:
+        raise PlanSignInError(str(exc)) from None
+    return {"url": url, "expires_in": int(claude_code.LOGIN_WINDOW)}
+
+
+def claude_sign_in_finish(code: str) -> dict[str, Any]:
+    """Pass the code claude.com showed to the waiting login; returns the plan status."""
+    try:
+        claude_code.finish_browser_sign_in(code)
+    except claude_code.ClaudeCodeError as exc:
+        raise PlanSignInError(str(exc)) from None
+    return claude_plan_status(fresh=True)
+
+
+def claude_sign_in_cancel() -> None:
+    claude_code.cancel_browser_sign_in()
 
 
 def chatgpt_plan_status() -> dict[str, Any]:

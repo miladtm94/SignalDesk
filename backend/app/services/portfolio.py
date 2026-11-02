@@ -28,16 +28,28 @@ def load_book() -> tuple[dict[str, Any] | None, datetime | None]:
         return row.value["book"], row.updated_at
 
 
+def used_by_default() -> bool:
+    """Whether new analyses and backtests start on deciding against the saved book."""
+    with SessionLocal() as session:
+        row = session.get(AppPreference, PREFERENCE_KEY)
+        return bool(row is not None and isinstance(row.value, dict) and row.value.get("use_by_default"))
+
+
 def save_book(payload: PortfolioWrite) -> tuple[dict[str, Any], datetime]:
-    """Validate the book as upstream reads it, then keep it; raises ValueError when unusable."""
-    book = normalize_portfolio(payload.model_dump(mode="json"))
+    """Validate the book as upstream reads it, then keep it; raises ValueError when unusable.
+
+    The launch default is kept beside the book, not in it: a run's snapshot is
+    the book alone.
+    """
+    book = normalize_portfolio(payload.model_dump(mode="json", exclude={"use_by_default"}))
+    value = {"book": book, "use_by_default": payload.use_by_default}
     with SessionLocal.begin() as session:
         row = session.get(AppPreference, PREFERENCE_KEY)
         if row is None:
-            row = AppPreference(key=PREFERENCE_KEY, value={"book": book})
+            row = AppPreference(key=PREFERENCE_KEY, value=value)
             session.add(row)
         else:
-            row.value = {"book": book}
+            row.value = value
         session.flush()
         session.refresh(row)
         return book, row.updated_at

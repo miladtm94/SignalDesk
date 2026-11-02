@@ -32,7 +32,7 @@ from ..schemas import (
     RunPatch,
     RunSummary,
 )
-from ..services.charts import strategy_levels
+from ..services.charts import analysis_outcome, decision_direction, plan_levels, strategy_levels
 from ..services.costs import estimate_run_cost
 from ..services.orchestrator import TERMINAL_STATUSES, orchestrator
 from ..services.portfolio import load_book
@@ -220,22 +220,31 @@ def get_run_chart(run_id: str) -> dict:
         run = session.scalar(_run_query().where(Run.id == run_id))
         if run is None:
             raise HTTPException(status_code=404, detail="Run not found")
-        ticker = run.ticker
+        ticker, trade_date = run.ticker, run.trade_date
         levels = strategy_levels(run.decision, run.sections)
+        direction = decision_direction(run.decision, run.sections)
     try:
-        market = load_current_market_chart(ticker)
+        market = load_current_market_chart(ticker, since=trade_date)
     except Exception as exc:
         logger.warning("Current chart unavailable for run %s: %s", run_id, exc)
         raise HTTPException(
             status_code=503,
             detail="Current market candles are temporarily unavailable. The saved report is unaffected.",
         ) from exc
+    # Levels are checked against the close the analysis saw, not today's.
+    day = trade_date.isoformat()
+    seen = [candle["close"] for candle in market.candles if str(candle["time"]) <= day]
+    drawn, notes = plan_levels(levels, direction, seen[-1] if seen else None)
     return {
         "symbol": market.symbol,
         "as_of": market.as_of,
         "current_price": market.candles[-1]["close"],
         "candles": market.candles,
-        "levels": levels,
+        "levels": drawn,
+        "analysis_date": day,
+        "direction": direction,
+        "notes": notes,
+        "outcome": analysis_outcome(market.candles, trade_date, drawn),
     }
 
 

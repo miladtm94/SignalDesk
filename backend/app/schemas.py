@@ -96,6 +96,7 @@ class UsageOut(BaseModel):
     tokens_out: int
     estimated_cost_usd: float
     api_equivalent_usd: float | None = None
+    data_coverage: dict[str, dict[str, int]] | None = None
 
 
 class NoteOut(BaseModel):
@@ -168,6 +169,31 @@ class StrategyLevelOut(BaseModel):
     kind: Literal["entry", "take_profit", "stop_loss"]
     price: float
     source: str
+    # What the level means for this decision's side ("Sell / trim at" on an Underweight).
+    label: str | None = None
+
+
+class LevelTouchOut(BaseModel):
+    kind: Literal["entry", "take_profit", "stop_loss"]
+    label: str | None = None
+    price: float
+    date: str | None = None
+
+
+class AnalysisOutcomeOut(BaseModel):
+    """What the price did after the analysis date, from the chart's candles."""
+
+    date: str
+    close: float
+    latest_date: str
+    latest_close: float
+    change_pct: float
+    sessions: int
+    high: float | None = None
+    high_date: str | None = None
+    low: float | None = None
+    low_date: str | None = None
+    touches: list[LevelTouchOut] = Field(default_factory=list)
 
 
 class RunChartOut(BaseModel):
@@ -176,6 +202,10 @@ class RunChartOut(BaseModel):
     current_price: float
     candles: list[ChartCandleOut]
     levels: list[StrategyLevelOut]
+    analysis_date: str | None = None
+    direction: Literal["long", "hold", "reduce"] | None = None
+    notes: list[str] = Field(default_factory=list)
+    outcome: AnalysisOutcomeOut | None = None
 
 
 class RunPatch(BaseModel):

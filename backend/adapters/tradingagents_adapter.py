@@ -17,12 +17,14 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import LLMResult
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS, RESULTS_DIR
+from tradingagents import __version__ as CORE_VERSION
 from tradingagents.agents.rating import run_rating
 from tradingagents.backtest import iter_grid, summarize as summarize_backtest
 from tradingagents.dataflows.symbols import normalize_symbol
@@ -146,7 +148,7 @@ class SectionEvent:
 class AdapterResult:
     final_state: dict[str, Any]
     decision: str | None
-    usage: dict[str, int]
+    usage: dict[str, Any]
     report_path: Path
     degraded_streaming: bool = False
 
@@ -158,10 +160,29 @@ class MarketChartData:
     candles: list[dict[str, str | float]]
 
 
-def load_current_market_chart(symbol: str, limit: int = 180) -> MarketChartData:
-    """Load current daily OHLC candles through the upstream market-data path."""
+def core_version() -> str:
+    """The version of the core package this console runs.
+
+    Read from the code, not the install's metadata: an editable install keeps the
+    version it was installed at until it is reinstalled, so after an upstream
+    merge the metadata named the release before it.
+    """
+    return CORE_VERSION or "unknown"
+
+
+def load_current_market_chart(symbol: str, limit: int = 180, since: date | None = None) -> MarketChartData:
+    """Load current daily OHLC candles through the upstream market-data path.
+
+    ``since`` keeps that date on the chart, with a few weeks before it, however
+    long ago it was: what the price did after an analysis is how it is judged.
+    """
     canonical = normalize_symbol(symbol)
-    frame = load_ohlcv(symbol, date.today().isoformat()).tail(limit)
+    frame = load_ohlcv(symbol, date.today().isoformat())
+    start = len(frame) - limit
+    if since is not None:
+        before = int((frame["Date"] < pd.Timestamp(since)).sum())
+        start = min(start, before - 40)
+    frame = frame.iloc[max(0, start):]
     candles = [
         {
             "time": row.Date.strftime("%Y-%m-%d"),
@@ -177,8 +198,39 @@ def load_current_market_chart(symbol: str, limit: int = 180) -> MarketChartData:
     return MarketChartData(symbol=canonical, as_of=str(candles[-1]["time"]), candles=candles)
 
 
+DATA_OUTCOMES = ("ok", "empty", "withheld", "unavailable", "error")
+
+
+def data_outcome(output: Any) -> str:
+    """What a data tool's answer was: data, none found, withheld, unavailable, or an error.
+
+    Upstream answers in text: a vendor that failed returns a ``DATA_UNAVAILABLE``
+    or ``<... unavailable ...>`` placeholder, a past run is told live-only data is
+    "withheld for" its date, and a tool error comes back as "Error: ...".
+    """
+    text = str(getattr(output, "content", output) or "").lstrip()
+    head = text[:400]
+    if not text:
+        return "empty"
+    if head.startswith(("DATA_UNAVAILABLE", "NO_DATA_AVAILABLE")) or (
+        head.startswith("<") and " unavailable " in head
+    ):
+        return "unavailable"
+    if "withheld for" in head:
+        return "withheld"
+    if head.startswith(("Error", "start_date", "Indicator ")) or "is not supported" in head:
+        return "error"
+    if head.startswith(("No headlines", "No news found", "No market headlines", "No global news")):
+        return "empty"
+    return "ok"
+
+
 class StatsCallbackHandler(BaseCallbackHandler):
-    """Thread-safe equivalent of the upstream CLI stats callback."""
+    """Thread-safe equivalent of the upstream CLI stats callback.
+
+    It also tallies what each data tool returned, so a run that decided without
+    its news or fundamentals says so instead of reading like a full analysis.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -188,6 +240,8 @@ class StatsCallbackHandler(BaseCallbackHandler):
         self.tokens_out = 0
         # Reported by plan-billed calls (Claude Code): the same tokens at API prices.
         self.api_equivalent_usd = 0.0
+        self._open_tools: dict[Any, str] = {}
+        self.data: dict[str, dict[str, int]] = {}
 
     def on_llm_start(self, serialized, prompts, **kwargs) -> None:
         with self._lock:
@@ -214,8 +268,23 @@ class StatsCallbackHandler(BaseCallbackHandler):
                 self.api_equivalent_usd += float(notional)
 
     def on_tool_start(self, serialized, input_str, **kwargs) -> None:
+        name = (serialized or {}).get("name") or kwargs.get("name") or "tool"
         with self._lock:
             self.tool_calls += 1
+            self._open_tools[kwargs.get("run_id")] = name
+
+    def on_tool_end(self, output, **kwargs) -> None:
+        self._tally(kwargs.get("run_id"), data_outcome(output))
+
+    def on_tool_error(self, error, **kwargs) -> None:
+        self._tally(kwargs.get("run_id"), "error")
+
+    def _tally(self, run_id: Any, outcome: str) -> None:
+        with self._lock:
+            name = self._open_tools.pop(run_id, None)
+            if name is not None:
+                counts = self.data.setdefault(name, dict.fromkeys(DATA_OUTCOMES, 0))
+                counts[outcome] += 1
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -225,6 +294,7 @@ class StatsCallbackHandler(BaseCallbackHandler):
                 "tokens_in": self.tokens_in,
                 "tokens_out": self.tokens_out,
                 "api_equivalent_usd": round(self.api_equivalent_usd, 6),
+                "data": {name: dict(counts) for name, counts in self.data.items()},
             }
 
 
@@ -400,15 +470,20 @@ class ConsolePortfolio(PortfolioContext):
     positions: list[ConsolePosition] = Field(default_factory=list)
 
     def render(self, ticker: str) -> str:
-        text = super().render(ticker)
-        held = self.position_in(ticker)
-        if held is None or not held.currency or held.average_price is None:
-            return text
-        price = f", average price {held.average_price:,.2f}"
-        text = text.replace(price, f"{price} {held.currency}", 1)
-        if self.currency and held.currency != self.currency:
-            text += f"\n- The average price is in {held.currency}; cash is in {self.currency}."
-        return text
+        lines = super().render(ticker).split("\n")
+        # Upstream writes one "Current position" line per holding of the instrument
+        # (several when a broker lists it under more than one spelling), in this order.
+        rows = [i for i, line in enumerate(lines) if line.startswith("- Current position in ")]
+        notes: list[str] = []
+        for row, held in zip(rows, self.positions_in(ticker), strict=False):
+            if not held.currency or held.average_price is None:
+                continue
+            price = f", average price {held.average_price:,.2f}"
+            lines[row] = lines[row].replace(price, f"{price} {held.currency}", 1)
+            note = f"- The average price is in {held.currency}; cash is in {self.currency}."
+            if self.currency and held.currency != self.currency and note not in notes:
+                notes.append(note)
+        return "\n".join(lines + notes)
 
     def fingerprint(self) -> str:
         if any(p.currency for p in self.positions):

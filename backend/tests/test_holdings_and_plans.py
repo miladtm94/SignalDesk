@@ -72,6 +72,19 @@ def test_each_position_s_price_currency_reaches_the_agents(client):
     assert "Current position in AAPL: 5 units\n" in plain
 
 
+def test_every_holding_of_the_instrument_carries_its_currency():
+    # Upstream matches a broker's spelling (BTCUSDT) to the analyzed instrument and
+    # writes one line per holding, so each line needs its own currency.
+    book = adapter.ConsolePortfolio.model_validate({"cash": 1000, "currency": "AUD", "positions": [
+        {"ticker": "BTC-USD", "quantity": 0.5, "average_price": 60000, "currency": "USD"},
+        {"ticker": "BTCUSDT", "quantity": 0.2, "average_price": 65000, "currency": "USD"},
+    ]})
+    text = book.render("BTC-USD")
+    assert "0.5 units, average price 60,000.00 USD" in text
+    assert "0.2 units, average price 65,000.00 USD (listed as BTCUSDT)" in text
+    assert text.count("The average price is in USD; cash is in AUD.") == 1
+
+
 def test_a_book_without_position_currencies_reads_and_fingerprints_as_upstream_s():
     from tradingagents.portfolio import PortfolioContext
 

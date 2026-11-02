@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from backend.app import main as main_module
 from backend.app.database import SessionLocal
 from backend.app.main import app
 from backend.app.models import Run, RunEvent
 from backend.app.services.orchestrator import orchestrator
 
 
-def test_health_reports_the_installed_core_version(monkeypatch):
-    monkeypatch.setattr(main_module, "version", lambda package: "0.5.0")
+def test_health_reports_the_running_core_version(monkeypatch):
+    from backend.adapters import tradingagents_adapter as adapter
+
+    monkeypatch.setattr(adapter, "CORE_VERSION", "0.5.0")
     with TestClient(app) as client:
         response = client.get("/api/health")
     assert response.status_code == 200
@@ -18,6 +19,13 @@ def test_health_reports_the_installed_core_version(monkeypatch):
         "status": "ok",
         "upstream": "TradingAgents v0.5.0",
     }
+
+
+def test_the_core_version_is_read_from_the_code_not_the_install():
+    import tradingagents
+    from backend.adapters import tradingagents_adapter as adapter
+
+    assert adapter.core_version() == tradingagents.__version__
 
 
 def test_run_lifecycle_without_external_model_calls(monkeypatch):

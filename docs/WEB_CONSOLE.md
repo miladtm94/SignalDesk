@@ -117,8 +117,25 @@ every cell is a complete multi-agent run.
   backend restart becomes resumable.
 - Scores come from upstream's `summarize` (decisions, hit rate and mean alpha
   by rating), with the overall and per-ticker figures beside them. They are
-  indicative: one sampling per cell, and news and social feeds are not
-  archived. It is not a portfolio simulation.
+  indicative: one sampling per cell, and StockTwits and Reddit serve only
+  recent posts, so past cells have no social feed (news comes from Google News
+  search, which covers past windows). It is not a portfolio simulation.
+
+## Where the data comes from
+
+Prices and indicators come from Yahoo Finance, statements from SEC EDGAR as
+filed (US companies, then Yahoo), macro series from FRED. Company and market
+news come from **Google News search**, which takes a date range, so an analysis
+dated weeks back reads the headlines published in its own week (an earnings
+beat, a guidance cut, analyst actions); Yahoo's news feed is the fallback when
+Google does not answer. Headlines are kept to the analysis window by their
+publication date, and a past window is cached, so re-running the same date reads
+the same news.
+
+Some data exists only as of today and is withheld from a past date rather than
+leaked into it: Yahoo's company profile and valuation, insider trades without a
+filing date, and prediction-market odds. StockTwits and Reddit serve only recent
+posts, so the sentiment analyst has no social feed for a past date and says so.
 
 ## Reading a report
 
@@ -139,6 +156,26 @@ as it is:
 
 The markers and emojis are reading aids picked from the words used, not extra
 analysis. The Markdown download is the agents' text unchanged.
+
+The chart above the report shows the daily candles from a few weeks before the
+analysis date to today, with an **Analysis** marker on the date the run used.
+
+- **Levels read for the decision's side.** The entry, target and stop that the
+  portfolio manager, research manager or trader labelled are named for what the
+  rating asks: a Buy or Overweight is a long setup (Entry, Take profit, Stop
+  loss); an Underweight or Sell is a reduce setup (Sell / trim at, Downside
+  target, Reassess above); a Hold names levels by where they sit (Exit below,
+  Upside target). A level on the wrong side of the entry, such as a long's target
+  below its entry, or far from the price (a misread "2 ATR"), is not drawn, and a
+  note under the chart says why.
+- **The outcome since the analysis**: the close the analysis saw, the latest
+  close and the change, the highest and lowest prices since, and the date each
+  level was first reached. This is how to judge a call after the fact.
+
+The **Data coverage** card beside the report lists what each kind of data
+returned during the run: served, partly served, none found, withheld for a past
+date, or unavailable. A run that decided without its company news or statements
+says so at the top of the card; weigh its call accordingly.
 
 ## Stopping and resuming an analysis
 

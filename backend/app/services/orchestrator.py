@@ -317,6 +317,7 @@ class RunOrchestrator:
             tokens_out=usage.tokens_out,
         )
         usage.api_equivalent_usd = snapshot.get("api_equivalent_usd") or None
+        usage.data_coverage = snapshot.get("data") or usage.data_coverage
 
     @staticmethod
     def _hydrate_structured_decision(session, run_id: str, decision: Decision) -> None:

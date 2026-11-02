@@ -65,6 +65,8 @@ export type Decision = {
   stop_loss: number | null;
 };
 
+export type DataOutcome = "ok" | "empty" | "withheld" | "unavailable" | "error";
+
 export type Usage = {
   llm_calls: number;
   tool_calls: number;
@@ -72,6 +74,8 @@ export type Usage = {
   tokens_out: number;
   estimated_cost_usd: number;
   api_equivalent_usd: number | null;
+  // What each data tool returned during the run, by outcome.
+  data_coverage: Record<string, Record<DataOutcome, number>> | null;
 };
 
 export type RunStatus = "queued" | "running" | "completed" | "failed" | "stopped";
@@ -147,6 +151,21 @@ export type StrategyLevel = {
   kind: "entry" | "take_profit" | "stop_loss";
   price: number;
   source: string;
+  label: string | null;
+};
+
+export type AnalysisOutcome = {
+  date: string;
+  close: number;
+  latest_date: string;
+  latest_close: number;
+  change_pct: number;
+  sessions: number;
+  high: number | null;
+  high_date: string | null;
+  low: number | null;
+  low_date: string | null;
+  touches: { kind: StrategyLevel["kind"]; label: string | null; price: number; date: string | null }[];
 };
 
 export type RunChart = {
@@ -155,6 +174,10 @@ export type RunChart = {
   current_price: number;
   candles: ChartCandle[];
   levels: StrategyLevel[];
+  analysis_date: string | null;
+  direction: "long" | "hold" | "reduce" | null;
+  notes: string[];
+  outcome: AnalysisOutcome | null;
 };
 
 export type SecretMask = { name: string; configured: boolean; masked_value: string | null };

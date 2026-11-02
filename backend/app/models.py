@@ -113,6 +113,9 @@ class Usage(Base):
     # For a run billed to a Claude plan: what its tokens would cost at API list
     # prices, as Claude Code reports it. The plan itself bills nothing per call.
     api_equivalent_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # What each data tool returned ({tool: {ok, empty, withheld, unavailable, error}}),
+    # so a run that decided without its news or statements shows it.
+    data_coverage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="usage")
 

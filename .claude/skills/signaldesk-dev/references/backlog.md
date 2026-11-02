@@ -1,4 +1,4 @@
-# Known issues, open questions and next improvements (as of 2026-10-23)
+# Known issues, open questions and next improvements (as of 2026-11-03)
 
 Verify an item still applies before acting on it; strike it here when fixed.
 
@@ -9,7 +9,8 @@ Verify an item still applies before acting on it; strike it here when fixed.
    `decisions.action/entry_price/stop_loss/price_target/time_horizon/confidence`
    stay null (the dashboard's "Trader action" shows "—"). Only the PM rating is
    typed (`final_rating`). The chart's levels come from explicit labels in the
-   markdown (`services/charts.py`, display only). Proper fix: an upstream change
+   markdown (`services/charts.py`, display only), named for the rating's side and
+   dropped when on the wrong side of the entry. Proper fix: an upstream change
    that keeps `*_structured` state values; the adapter already reads them.
 2. **Plan-limit wording is unverified.** `claude_code._LIMIT` was written from
    known Claude Code messages; no real limit has been hit yet. When one happens,
@@ -40,16 +41,34 @@ Verify an item still applies before acting on it; strike it here when fixed.
 11. Untested: the Claude provider on Windows (code paths exist: `claude.exe`,
     process groups); an in-container `tradingagents login claude` (the token
     route is the documented one).
-12. Three macOS-only failures in upstream's `tests/test_cache_writes.py`.
+12. ~~Three macOS-only failures in `tests/test_cache_writes.py`~~ — fixed in v0.7.1.
 13. yfinance 1.7.0 still uses pandas `inplace=True`; the `Pandas4Warning`s are hidden by
     `yahoo/common.hide_yfinance_inplace_deprecations()`. Remove it after a yfinance
     release that stops using `inplace` (check `pip index versions yfinance`).
+
+14. **News is headlines only.** Google News RSS gives title, source and date, not
+    the article; Yahoo summaries arrive only when Google is down (the chain falls
+    back). Google can throttle or block (a server IP more than a home one); the
+    vendor retries 429/5xx and raises `VendorUnavailableError` so Yahoo serves.
+    Alpha Vantage `NEWS_SENTIMENT` (key, 25 calls/day free) also takes a window:
+    add it to the chain for summaries if the key is paid.
+15. **No social feed for a past date.** StockTwits and Reddit serve recent posts
+    only, so historical runs and backtest cells have news but no social data.
+16. **Run-to-run variation on a plan.** Claude Code takes no temperature, so the
+    same date can still rate differently; data inputs are now stable (cached past
+    news, fixed snapshot). Data coverage counts the tool calls only: the
+    sentiment analyst fetches its three sources directly and is not counted.
+17. **Statements lag the earnings release.** EDGAR serves a quarter once its
+    10-Q is filed (~2 weeks after the 8-K press release), and 10-K years have no
+    Q4 column (Q4 = FY − 9M is not derived). Between release and filing only the
+    news headlines carry the new quarter.
 
 ## Ranked ideas
 
 | # | Idea | Why it matters | Sketch |
 | --- | --- | --- | --- |
-| 1 | **Outcomes for live runs** | The history shows ratings but never whether they were right. | The live memory log already settles past decisions (alpha vs benchmark). Read it in the adapter (`backtest_outcomes` works on any log), join on ticker+date, show realized alpha/hit in the run table and run view; add a "Settle past decisions" action (`settle_all_pending`). |
+| 0 | **Earnings releases and point-in-time valuation** | A run between an earnings release and its 10-Q misses the quarter; past runs have no P/E. | SEC 8-K Item 2.02 + EX-99.1 excerpt as a fundamentals tool; P/E from EDGAR shares × the as-of close and TTM EPS as filed. |
+| 1 | **Outcomes for live runs** (chart part done: outcome since the analysis) | The history shows ratings but never whether they were right. | The live memory log already settles past decisions (alpha vs benchmark). Read it in the adapter (`backtest_outcomes` works on any log), join on ticker+date, show realized alpha/hit in the run table and run view; add a "Settle past decisions" action (`settle_all_pending`). |
 | 2 | **Backtest export and comparison** | Results leave the app only as screenshots. | CSV/Markdown export of cells + scores; a compare view of two sweeps (same tickers, different models/depth). |
 | 3 | **Run queue with a concurrency limit** | Several runs at once on a Pro plan hit its limits faster and contend for Claude Code slots. | Queue launches in the orchestrator, limit per provider, show queue position. |
 | 4 | **Upgrade FastAPI/uvicorn** | Removes the Starlette pin trap (issue 4). | Bump pins, run console suite and a live smoke. |

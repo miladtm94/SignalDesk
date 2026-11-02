@@ -51,3 +51,7 @@ merge as a migration, not a pull.
   removed (`run_rating`), `_get_provider_kwargs` removed (timeout via the tier
   factory), module moves, Python ≥3.11, pydantic 2.12.5; state logs fixed to land
   in `results/`.
+- v0.7.1 (2026-11-03): clean merge; `ConsolePortfolio.render` adapted to one line
+  per holding (broker aliases); health reads `tradingagents.__version__` (editable
+  installs keep stale metadata); macOS suite passes. Fork fixes to upstream files
+  made alongside are listed in `docs/UPSTREAM_UPGRADE.md`.

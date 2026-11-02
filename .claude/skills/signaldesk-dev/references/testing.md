@@ -1,11 +1,20 @@
 # Testing reference
 
-## Last known results (2026-10-23, `main` at `f40eebd` + skill/docs)
+## Last known results (2026-11-03, `main`: v0.7.1 merge + data-reliability work)
 
-- Core suite (`tests/`): 1394 passed, 1 skipped; the 3 `test_on_windows_*`
-  tests in `tests/test_cache_writes.py` fail on macOS only (Windows `errno`).
-- Console suite (`backend/tests/`): 58 passed (1 opt-in integration test deselected).
+- Core suite (`tests/`): 1489 passed, 1 skipped (macOS included, nothing deselected).
+- Console suite (`backend/tests/`): 98 passed (1 opt-in integration test deselected).
 - `ruff check .`: clean. Frontend `tsc -b` and `vite build`: clean.
+- Live on the Claude Pro plan: FCX dated 2026-07-30, news + social analysts only,
+  haiku quick / sonnet deep, effort low: 11 calls, ~96K in / 28K out (≈ $0.11 at
+  API prices). News came from Google News (Q2 beat, soft Q3 guide, Grasberg,
+  Indonesia export rules) where the same date had returned only placeholders;
+  data coverage recorded and rendered.
+
+## Earlier results (2026-10-23, `main` at `f40eebd` + skill/docs)
+
+- Core suite: 1394 passed, 1 skipped (3 macOS-only `test_cache_writes` failures).
+- Console suite: 58 passed.
 - Live on a Claude Pro plan: one full analysis (11 calls) and a 2-cell backtest
   through the UI (24 calls, ~202K input / 54K output tokens, ≈ $0.18 at API
   prices), both scored and decided against a saved book.

@@ -1,8 +1,23 @@
 # TradingAgents upstream upgrade procedure
 
-The web adapter is verified against **TradingAgents v0.7.0**. The backend image
+The web adapter is verified against **TradingAgents v0.7.1**. The backend image
 installs the package from this repository so the core and console cannot drift
 to different versions.
+
+## v0.7.1 migration (2026-11-03)
+
+- Merged v0.7.1 without conflicts; the adapter needed no change (`settle_pending`,
+  `iter_grid`, `summarize` and the run lifecycle kept their interfaces).
+- `PortfolioContext.render` now writes one line per holding of the analyzed
+  instrument (broker spellings such as `BTCUSDT` match `BTC-USD`), so
+  `ConsolePortfolio.render` adds each line's currency line by line.
+- SEC EDGAR statements are one row per period; upstream's macOS test fixes make
+  the whole core suite pass on macOS (`check_all.sh` no longer deselects tests).
+- `/api/health` reads the version from the code (`adapter.core_version()`): an
+  editable install keeps the metadata of the version it was installed at.
+- Fork fixes to upstream files made with this merge (see the table): Google News
+  search as the first news vendor, the analyst report kept when a model writes it
+  beside its last tool call, and the indicator label for a session not yet closed.
 
 ## v0.7.0 migration (2026-10-23)
 
@@ -43,6 +58,13 @@ Expect merge conflicts here; keep both sides.
 | `tests/test_chatgpt_provider.py`, `tests/test_cli_commands.py` | The Subscription submenu lists Claude; `claude` is now a valid plan, so the invalid-plan example is `gemini` |
 | `tradingagents/output_languages.py` | Shared CLI/console language list (fork-owned file) |
 | `tradingagents/dataflows/vendors/yahoo/common.py` | `hide_yfinance_inplace_deprecations()`: silences pandas 3.1's `inplace` deprecation raised inside yfinance 1.7.0; drop it once yfinance stops using `inplace` |
+| `tradingagents/dataflows/vendors/google_news.py` | Google News search vendor for company and market news over any date window (fork-owned file) |
+| `tradingagents/dataflows/router.py` | Registers `google_news` for `get_news` and `get_global_news` |
+| `tradingagents/default_config.py` | `news_data` defaults to `google_news,yfinance`: Yahoo's feed holds only recent items, so a past run had no news |
+| `tests/test_dataflows_config.py` | Asserts that new `news_data` default |
+| `tradingagents/agents/analysts/sentiment_analyst.py` | The news block's heading no longer names Yahoo (the block names its source) |
+| `tradingagents/agents/analysts/turn.py` | `_report`: a report written beside the last tool call is kept when the final reply only points back to it |
+| `tradingagents/dataflows/vendors/yahoo/market.py` | A day after the newest bar reads "no closed session yet", not "weekend or holiday" |
 | `pyproject.toml` | The `claude` extra (Agent SDK's bundled Claude Code) |
 | `Dockerfile`, `docker-compose.yml` | `WITH_CLAUDE_CODE` build arg, `CLAUDE_CONFIG_DIR`, console services |
 | `README.md`, `.env.example`, `Makefile` | Fork documentation and targets |

@@ -10,7 +10,7 @@ Read this first; it saves an hour of re-deriving the project. Deeper material is
 
 ## What the project is
 
-**Upstream** (`upstream` remote, TauricResearch/TradingAgents, merged at **v0.7.0**):
+**Upstream** (`upstream` remote, TauricResearch/TradingAgents, merged at **v0.7.1**):
 a LangGraph pipeline that analyses one ticker on one date. Selected analysts
 (market, social/sentiment, news, fundamentals) run in parallel subgraphs with
 tools → bull/bear debate → Research Manager → Trader → aggressive/conservative/
@@ -21,7 +21,8 @@ Upstream also ships a CLI (`tradingagents`, Typer + questionary + rich),
 `run_backtest` over a ticker×date grid, `PortfolioContext` holdings, and a
 ChatGPT-plan provider.
 
-**This fork** (`origin` remote, miladtm94/TradingAgents, branch `main`) adds:
+**This fork** (`origin` remote, **miladtm94/SignalDesk** — renamed from
+TradingAgents on 2026-11-03, still in upstream's fork network — branch `main`) adds:
 
 - **SignalDesk** — local single-user research console: `backend/` (FastAPI,
   SQLAlchemy/SQLite, runs work on threads, WebSocket event stream) and
@@ -34,7 +35,10 @@ ChatGPT-plan provider.
 
 Commit history to know (2026-10-23): `b70a7d2` merge of upstream v0.7.0 with adapter
 fixes, `2db658a` claude provider, `b9d5d25` SignalDesk plan + holdings + stop,
-`f40eebd` SignalDesk backtests. Check `git log --oneline -10` for anything newer.
+`f40eebd` SignalDesk backtests; 2026-11-03: `d44de30` merge of upstream v0.7.1,
+then the data-reliability work (Google News vendor, lost-report fix, side-aware
+chart levels with outcomes, data coverage). Check
+`git log --oneline -10` for anything newer.
 
 ## Where things live
 
@@ -108,8 +112,13 @@ DB tables and every API route.
   `~/.claude/local`, the Agent SDK's bundled copy and editor-bundled copies
   (`~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude`).
   `TRADINGAGENTS_CLAUDE_CLI` overrides.
-- On macOS, three upstream tests in `tests/test_cache_writes.py` always fail
-  (`errno.EDEADLOCK` is Windows/Linux only). Not a regression.
+- Since v0.7.1 the whole core suite passes on macOS (the old
+  `test_cache_writes.py` failures were fixed upstream).
+- Node here is 18; current `playwright-core` needs Node 20, so install
+  `playwright-core@1.47.2` for headless screenshots.
+- The user's own `make web-backend` may hold `127.0.0.1:8765` with reload on: an
+  edit to `backend/` or `tradingagents/` restarts it, so check no run is active
+  (`runs.status` queued/running) before editing while it is up.
 - Locale is en-AU. The API returns SQLite timestamps without a UTC offset; the
   frontend parses them with `parseTimestamp` (treat as UTC) and builds default
   dates with `localISODate()`. Keep using those helpers.

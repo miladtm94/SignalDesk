@@ -10,23 +10,13 @@ if ! "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null
   exit 2
 fi
 
-skip=()
-if [ "$(uname)" = "Darwin" ]; then
-  # These simulate Windows file locking with errno.EDEADLOCK, which macOS lacks.
-  for name in test_on_windows_the_lock_is_waited_for_while_another_writer_holds_it \
-              test_on_windows_a_lock_that_cannot_be_taken_is_reported_not_retried_forever \
-              test_on_windows_a_held_lock_is_reported_when_not_waiting; do
-    skip+=(--deselect "tests/test_cache_writes.py::$name")
-  done
-fi
-
 failed=()
 step() {
   local label=$1; shift
   echo "== $label"
   if "$@"; then echo "   ok"; else failed+=("$label"); fi
 }
-step "core tests"          "$PYTHON" -m pytest -q -p no:cacheprovider tests "${skip[@]}"
+step "core tests"          "$PYTHON" -m pytest -q -p no:cacheprovider tests
 step "console tests"       "$PYTHON" -m pytest -q -p no:cacheprovider backend/tests
 step "lint"                "$PYTHON" -m ruff check .
 step "frontend type-check" bash -c 'cd frontend && npx tsc -b --pretty false'

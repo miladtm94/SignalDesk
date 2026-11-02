@@ -146,8 +146,8 @@ shows exactly what the decision agents will read for each ticker.
 ### Run SignalDesk locally
 
 ```bash
-git clone https://github.com/miladtm94/TradingAgents.git
-cd TradingAgents
+git clone https://github.com/miladtm94/SignalDesk.git
+cd SignalDesk
 cp .env.example .env  # add the API key for your chosen provider
 docker compose up --build web-backend web-frontend
 ```
@@ -201,8 +201,8 @@ The selected analysts work at the same time, each on its own tools, and the rese
 
 Clone this SignalDesk-enabled fork:
 ```bash
-git clone https://github.com/miladtm94/TradingAgents.git
-cd TradingAgents
+git clone https://github.com/miladtm94/SignalDesk.git
+cd SignalDesk
 ```
 
 The original framework is maintained at

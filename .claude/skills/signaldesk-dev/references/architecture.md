@@ -50,7 +50,13 @@ Contents: 1. Core package · 2. CLI · 3. Console backend · 4. Data flows ·
   `reflection.py` (one quick-LLM call per settled decision).
 - `dataflows/` — vendor router and vendors (Yahoo, SEC EDGAR, Alpha Vantage,
   FRED, Polymarket, Reddit, StockTwits); `vendors/yahoo/ohlcv.load_ohlcv` feeds
-  the console chart and quotes.
+  the console chart and quotes. **Fork-owned** `vendors/google_news.py`: Google
+  News RSS search with `after:`/`before:` for `get_news` (ticker query first,
+  company name tops up; `company_queries`, `search_name`) and `get_global_news`
+  (one search per `global_news_queries` topic). Default `news_data` chain is
+  `google_news,yfinance`. Results cached in `data_cache_dir/google_news/`: a
+  window that ended 4+ days ago for good, a live one for 30 min; a thin answer
+  (<10 items) is asked again, since Google sometimes answers 6 then 100.
 - `output_languages.py` — fork-owned shared language list.
 
 ## 2. CLI (`cli/`)
@@ -73,13 +79,22 @@ the Live display over `stream_run`. `prefs.py`: remembered answers.
   pipeline order), `run_streaming_analysis(..., portfolio, results_dir,
   memory_log_path, should_stop)` (raises `RunStopped`; falls back to
   `propagate()` and emits `streaming_degraded` only for interface errors before
-  any section), `StatsCallbackHandler` (calls, tokens, `api_equivalent_usd`),
+  any section), `StatsCallbackHandler` (calls, tokens, `api_equivalent_usd`, and
+  `data`: each tool's outcomes via `data_outcome()` — ok/empty/withheld/
+  unavailable/error — stored as `usage.data_coverage`), `core_version()`,
   `upstream_catalog()` + `_REASONING_CONTROLS` (provider/model metadata for the
   UI), portfolio helpers (`normalize_portfolio`, `portfolio_context`), plan
   status (`claude_plan_status`, `chatgpt_plan_status`), backtest helpers
   (`backtest_dates`, `backtest_benchmark`, `backtest_outcomes`, `backtest_scores`,
   `settle_backtest`, `RATING_DIRECTION`, `sweep_blocker`),
-  `load_current_market_chart`.
+  `load_current_market_chart(symbol, since=trade_date)` (keeps the analysis date
+  on the chart).
+- `app/services/charts.py` — display-only levels: `strategy_levels` (labelled
+  lines in PM → RM → trader), `decision_direction` (rating, else the trader's
+  proposal → long/hold/reduce), `plan_levels` (names levels for the side, drops
+  ones on the wrong side of the entry or >3×/<0.3× the analysis close, with
+  notes), `analysis_outcome` (close seen, change since, high/low, first touch of
+  each level). `/api/runs/{id}/chart` returns all of it.
 - `app/settings.py` — env-driven paths (`TRADING_CONSOLE_DATA_DIR`,
   `..._REPORTS_DIR`, `BACKTESTS_DIR`), host/port, CORS, daily cap, LLM timeout
   (120 s) and retries (1), heartbeat, `BACKTEST_MAX_CELLS` (60). It sets
@@ -130,7 +145,7 @@ the sweep (`sweep_blocker`); Stop stops the running cell; restart → `stopped`.
 ## 5. Database (SQLite via SQLAlchemy, `backend/data/console.sqlite3`)
 
 `runs` (config, status, `portfolio_snapshot`, `backtest_id`), `run_sections`,
-`decisions`, `usage` (`api_equivalent_usd`), `run_notes`, `run_events`,
+`decisions`, `usage` (`api_equivalent_usd`, `data_coverage`), `run_notes`, `run_events`,
 `watchlist`, `secrets`, `app_preferences` (`defaults`, `portfolio`), `backtests`
 (grid, config, `portfolio_snapshot`, status, `summary` JSON with `upstream`,
 `console`, `settlement`), `backtest_cells` (status, `run_id`, rating, pending,
@@ -159,7 +174,8 @@ missing indexes.
 
 - `App.tsx` — shell + navigation (`View` union), `Dashboard`, `NewAnalysis`,
   `LiveRun` (sections tabs, chart, notebook, Stop/Resume, book card, cell
-  banner), `StrategyChart`, `CompareRuns`, `SettingsView` + `PlanSettings` +
+  banner, `DataCoverageCard`), `StrategyChart` (analysis marker via
+  `createSeriesMarkers`, side-named levels, `OutcomeStrip`, notes), `CompareRuns`, `SettingsView` + `PlanSettings` +
   `PresetSettings`. Launch intents (`analyzeWithBook`) prefill New analysis.
 - `Backtests.tsx` — `BacktestsView`, `NewBacktest`, `BacktestView`, `CellDetail`.
 - `Holdings.tsx` — `HoldingsView` (editor with per-position currency from

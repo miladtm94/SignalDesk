@@ -161,6 +161,9 @@ def get_stock_stats_indicators_window(
         # Generate the date range we need
         current_dt = as_of_dt
         date_values = []
+        # A day after the newest bar is a session that has not closed yet (a run
+        # dated today, or ahead of the exchange's time zone), not a holiday.
+        latest = max(indicator_data, default=None)
 
         while current_dt >= before:
             date_str = current_dt.strftime('%Y-%m-%d')
@@ -168,6 +171,8 @@ def get_stock_stats_indicators_window(
             # Look up the indicator value for this date
             if date_str in indicator_data:
                 indicator_value = indicator_data[date_str]
+            elif latest is not None and date_str > latest:
+                indicator_value = f"N/A: no closed session yet (latest close is {latest})"
             else:
                 indicator_value = "N/A: Not a trading day (weekend or holiday)"
 

@@ -9,6 +9,9 @@ WRAP_UP = (
     "now from the tool results above, and say which data you could not retrieve."
 )
 
+# Text a reply wrote beside its tool calls counts as a report draft from this length.
+DRAFT_MIN_CHARS = 800
+
 
 def take_turn(prompt, llm, tools, messages):
     """The analyst's reply and its report, which stays empty while it calls tools.
@@ -22,9 +25,40 @@ def take_turn(prompt, llm, tools, messages):
         # call may still try, and some providers then answer with nothing.
         prompt = prompt.partial(tool_names="none; your tool rounds are spent")
         result = (prompt | llm).invoke(_as_text(messages))
-        return result, result.content
+        return result, _report(result.content, messages)
     result = (prompt | llm.bind_tools(tools)).invoke(messages)
-    return result, "" if result.tool_calls else result.content
+    return result, "" if result.tool_calls else _report(result.content, messages)
+
+
+def _report(final, messages):
+    """The report: the final reply, or the draft it points back to.
+
+    A model can write its whole report beside one last tool call, then answer
+    only "the full report is above" once the result is in. That pointer alone
+    would be filed as the report, so the draft leads and the final reply,
+    which may add what the last call returned, follows it.
+    """
+    drafts = [_said(m) for m in messages if isinstance(m, AIMessage) and m.tool_calls]
+    draft = max(drafts, key=len, default="").strip()
+    text = _said_text(final)
+    if len(draft) < DRAFT_MIN_CHARS or len(text) * 2 >= len(draft):
+        return final
+    return f"{draft}\n\n{text}".strip()
+
+
+def _said(message) -> str:
+    return _said_text(message.content)
+
+
+def _said_text(content) -> str:
+    """The text of a reply, whether one string or a list of content blocks."""
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block.get("text", "") if isinstance(block, dict) else str(block)
+        for block in content or []
+        if not isinstance(block, dict) or block.get("type", "text") == "text"
+    )
 
 
 def _as_text(messages):

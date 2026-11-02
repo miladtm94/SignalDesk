@@ -148,7 +148,7 @@ def _build_system_message(
 
 ## Data sources (pre-fetched, in this prompt)
 
-### News headlines — Yahoo Finance, past 7 days
+### News headlines — past 7 days (the block names its source)
 Institutional framing. Fact-driven, slower-moving signal.
 
 <start_of_news>

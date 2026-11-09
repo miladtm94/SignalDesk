@@ -78,7 +78,11 @@ FAKE = textwrap.dedent('''\
     json.dump(replies, open(os.path.join(state, "replies"), "w"))
     time.sleep(reply.pop("_sleep", 0))
     code = reply.pop("_exit", 0)
-    print(json.dumps(reply))
+    # A stream prints its events (the assistant's messages) before the result.
+    for event in reply.pop("_events", []):
+        print(json.dumps(event))
+    if not reply.pop("_cut", False):
+        print(json.dumps(reply))
     sys.exit(code)
 ''')
 
@@ -266,6 +270,46 @@ def test_an_answer_without_tool_calls_is_the_report(fake):
     fake.replies([structured({"content": "# Report\nPrices rose.", "tool_calls": []})])
     reply = _llm().bind_tools([get_stock_data]).invoke("NVDA")
     assert reply.tool_calls == [] and reply.content == "# Report\nPrices rose."
+
+
+def _wrote(*texts):
+    """Stream events: an assistant message per text, the way Claude Code prints them."""
+    return [{"type": "system", "subtype": "init"}] + [
+        {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "plan"},
+                                                      {"type": "text", "text": text}]}} for text in texts]
+
+
+REPORT = "# NVDA fundamentals\n" + "Revenue grew 62% on data-centre demand. " * 40
+
+
+@pytest.mark.unit
+def test_a_report_written_beside_the_structured_answer_is_the_answer(fake):
+    # Claude wrote the report as text, then answered content "it is above": only
+    # the stream carries that text, so structured calls read the stream.
+    fake.replies([{**structured({"content": "I've written the full report in the text above.", "tool_calls": []}),
+                   "_events": _wrote(REPORT)}])
+    reply = _llm().bind_tools([get_stock_data]).invoke("NVDA")
+    assert reply.tool_calls == [] and reply.content == REPORT.strip()
+    call = fake.calls()[0]
+    assert _flag(call, "--output-format") == "stream-json" and "--verbose" in call["args"]
+
+
+@pytest.mark.unit
+def test_a_short_aside_does_not_replace_the_structured_answer(fake):
+    fake.replies([{**structured({"content": "# Report\nPrices rose 4% on volume twice the average.", "tool_calls": []}),
+                   "_events": _wrote("Writing it up.")}])
+    assert _llm().bind_tools([get_stock_data]).invoke("NVDA").content.startswith("# Report")
+
+
+@pytest.mark.unit
+def test_a_stream_cut_off_before_its_result_is_not_read_as_an_error_message(fake):
+    # The model's text mentions a "usage limit"; it must not be taken for Claude Code's.
+    fake.replies([{**structured({"content": "", "tool_calls": []}), "_cut": True, "_exit": 1,
+                   "_events": _wrote("Margins hit the usage limit of the fab, so supply is short.")}] * 4)
+    with pytest.raises(claude_code.ClaudeCodeError) as raised:
+        _llm(max_retries=0).bind_tools([get_stock_data]).invoke("NVDA")
+    assert not isinstance(raised.value, claude_code.ClaudeUsageLimit)
+    assert "fab" not in str(raised.value)
 
 
 @pytest.mark.unit

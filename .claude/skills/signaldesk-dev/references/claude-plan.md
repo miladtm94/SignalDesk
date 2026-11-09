@@ -31,7 +31,7 @@ personal use. Documentation says plan access must not be offered to other people
 ## One call
 
 ```
-claude -p --output-format json --model <id> --system-prompt-file <tmp>/system.md \
+claude -p --output-format json|"stream-json --verbose" --model <id> --system-prompt-file <tmp>/system.md \
   --tools "" --strict-mcp-config --setting-sources "" --disable-slash-commands \
   --no-session-persistence --max-turns 1|4 [--effort <level>] [--json-schema <json>]
 ```
@@ -43,6 +43,15 @@ claude -p --output-format json --model <id> --system-prompt-file <tmp>/system.md
   commands/skills, only Claude Code's built-in plugins; `apiKeySource: none`.
 - `--max-turns 4` only with `--json-schema`: a structured answer is a checked
   StructuredOutput tool call that Claude Code re-asks while invalid.
+- With `--json-schema` the output is `stream-json --verbose`: the `result` of a
+  structured call is only the structure's JSON, and a model sometimes writes its
+  whole answer as plain text beside it, then fills `content` with "the report is
+  above" (NVDA 2026-11-10 lost its fundamentals report this way). The stream's
+  `assistant` text blocks become `Completion.said`; a tool-bound reply whose
+  `said` is over twice its `content` takes `said` as its content.
+  `_result_and_text` reads the last `type: result` event; a stream cut off
+  before it is an error that never quotes the model's text (it could read as a
+  usage-limit or sign-in message).
 - Environment: drop all `ANTHROPIC_*`, `CLAUDECODE`, `CLAUDE_PID`,
   `CLAUDE_EFFORT`, `CLAUDE_AGENT_SDK*`, every `CLAUDE_CODE_*` except
   `CLAUDE_CODE_OAUTH_TOKEN`; keep `CLAUDE_CONFIG_DIR`; add

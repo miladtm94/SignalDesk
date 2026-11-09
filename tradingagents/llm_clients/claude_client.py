@@ -297,7 +297,12 @@ class ChatClaudeCode(BaseChatModel):
             calls = [{"name": call["name"], "args": call.get("arguments") or {},
                       "id": f"call_{uuid.uuid4().hex[:24]}", "type": "tool_call"}
                      for call in answer.get("tool_calls") or []]
-            message = AIMessage(content=str(answer.get("content") or ""), tool_calls=calls)
+            content = str(answer.get("content") or "")
+            # A model can write its whole answer as text, then fill content with "the
+            # report is above": text nobody else sees. What it wrote is the answer then.
+            if len(completion.said) > 2 * len(content.strip()):
+                content = completion.said
+            message = AIMessage(content=content, tool_calls=calls)
         elif response_schema is not None:
             completion = self._ask(prompt, system + structured_instructions(), response_schema)
             message = AIMessage(content=json.dumps(completion.structured, ensure_ascii=False),

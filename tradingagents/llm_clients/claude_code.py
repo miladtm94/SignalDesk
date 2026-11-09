@@ -465,6 +465,9 @@ class Completion:
     cost_usd: float | None = None          # what the call would cost at API list prices; the plan bills none
     duration_ms: int | None = None
     stop_reason: str | None = None
+    # With a schema, the text the model wrote beside its structured answer, which
+    # Claude Code's result leaves out (it holds only the structured answer).
+    said: str = ""
 
 
 _slots_lock = threading.Lock()
@@ -514,6 +517,35 @@ def _run(args: list[str], prompt: str, env: dict[str, str], timeout: float | Non
         _kill(process)
         raise
     return process.returncode, out or "", err or ""
+
+
+def _result_and_text(out: str) -> tuple[dict | None, str]:
+    """The result object, and the text of the assistant messages a stream printed before it.
+
+    A stream that was cut off has no result event; its last event is not one either.
+    """
+    said, result = [], None
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "result":
+            result = event
+        elif event.get("type") == "assistant":
+            content = (event.get("message") or {}).get("content") or []
+            said += [block.get("text", "") for block in content
+                     if isinstance(block, dict) and block.get("type") == "text"]
+    if result is None:
+        result = _last_json(out)
+        if result is not None and result.get("type") not in (None, "result"):
+            result = None
+    return result, "\n\n".join(part.strip() for part in said if part.strip())
 
 
 def _last_json(text: str) -> dict | None:
@@ -585,8 +617,11 @@ def complete(
         # The system prompt goes by file: an analyst's can outgrow a command-line argument.
         system_file = Path(scratch) / "system.md"
         system_file.write_text(system, encoding="utf-8")
+        # A structured answer's result holds only the structure; the stream also
+        # carries any text the model wrote beside it, which can be the answer itself.
+        output = ["stream-json", "--verbose"] if json_schema is not None else ["json"]
         args = [
-            cli, "-p", "--output-format", "json", "--model", model,
+            cli, "-p", "--output-format", *output, "--model", model,
             "--system-prompt-file", str(system_file),
             "--tools", "", "--strict-mcp-config", "--setting-sources", "",
             "--disable-slash-commands", "--no-session-persistence",
@@ -599,9 +634,11 @@ def complete(
             args += ["--json-schema", json.dumps(json_schema, separators=(",", ":"))]
         code, out, err = _run(args, prompt, cli_environment(extra), timeout)
 
-    data = _last_json(out)
+    data, said = _result_and_text(out)
     if data is None:
-        raise _failure((err or out).strip() or f"Claude Code exited with code {code} and no answer")
+        # A stream holds the model's own writing, which must not be read as Claude Code's error.
+        printed = out if json_schema is None else ""
+        raise _failure((err or printed).strip() or f"Claude Code exited with code {code} and no answer")
     subtype = data.get("subtype")
     if data.get("is_error") or subtype not in (None, "success"):
         said = data.get("result") or "; ".join(str(e) for e in data.get("errors") or [])
@@ -623,4 +660,5 @@ def complete(
         cost_usd=data.get("total_cost_usd"),
         duration_ms=data.get("duration_ms"),
         stop_reason=data.get("stop_reason"),
+        said=said,
     )

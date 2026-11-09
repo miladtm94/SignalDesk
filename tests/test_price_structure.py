@@ -89,9 +89,9 @@ def _zone(kind, low, high, close):
             "last_date": "2026-09-01", "contains_price": low <= close <= high}
 
 
-def _stance(trend, close, rsi=55.0, zones=None, fast=None, slow=None):
+def _stance(trend, close, rsi=55.0, zones=None, fast=None, slow=None, fast_rising=None, atr=4.0):
     zones = zones if zones is not None else [_zone("support", 95, 99, close), _zone("resistance", 115, 119, close)]
-    return ps._plan("weekly", close, 4.0, rsi, trend, fast, slow, zones)
+    return ps._plan("weekly", close, atr, rsi, trend, fast, slow, zones, fast_rising=fast_rising)
 
 
 @pytest.mark.unit
@@ -104,11 +104,11 @@ def _stance(trend, close, rsi=55.0, zones=None, fast=None, slow=None):
     ("up", 112, 80, "wait_pullback"),    # extended
     ("range", 116, 55, "take_profit"),   # top of a range
     ("range", 107, 50, "hold"),          # middle of a range: no edge
-    ("range", 97, 45, "buy_zone"),       # bottom of a range
+    ("range", 97, 45, "buy_zone"),       # bottom of a range, momentum turned (see below)
     ("down", 97, 40, "avoid"),           # a downtrend is not bought at support
 ])
 def test_trend_and_location_give_the_stance(trend, close, rsi, stance):
-    plan = _stance(trend, close, rsi, slow=125 if trend == "down" else 100)
+    plan = _stance(trend, close, rsi, slow=125 if trend == "down" else 100, fast=96, fast_rising=True)
     assert plan["stance"] == stance
     assert plan["label"] == ps.STANCES[stance]
     assert plan["new_money"] and plan["holders"]
@@ -159,3 +159,24 @@ def test_bars_for_the_chart_carry_each_timeframe_s_averages():
     assert weekly["slow"] == 40 and monthly["slow"] == 20
     assert len(weekly["candles"]) > 200 and len(monthly["candles"]) > 50
     assert weekly["series"]["sma_slow"][0]["time"] == weekly["candles"][39]["time"]
+
+
+@pytest.mark.unit
+def test_support_in_a_correction_waits_for_momentum_to_turn():
+    # Below a still-rising 40-week line with the 10-week falling: a stock still being sold.
+    falling = _stance("range", 97, 40, fast=104, slow=110, fast_rising=False)
+    assert falling["stance"] == "wait_breakout"
+    assert falling["trigger"]["price"] == 104 and "10-week SMA" in falling["trigger"]["why"]
+    assert "do not add" in falling["holders"]
+    # Rising again but still under it: not yet.
+    assert _stance("range", 97, 45, fast=98, fast_rising=True)["stance"] == "wait_breakout"
+    # In an uptrend a pullback to support is bought whatever the 10-week does.
+    assert _stance("up", 97, 45, fast=104, slow=90, fast_rising=False)["stance"] == "buy_zone"
+
+
+@pytest.mark.unit
+def test_just_above_the_zone_is_at_most_three_percent_of_the_price():
+    # A weekly ATR of 16 on a ~100 stock: half an ATR would call 107 "in" a zone topping at 99.
+    zones = [_zone("support", 95, 99, 104), _zone("resistance", 125, 130, 104)]
+    assert _stance("up", 104, zones=zones, slow=90, atr=16)["stance"] != "buy_zone"
+    assert _stance("up", 101.5, zones=zones, slow=90, atr=16)["stance"] == "buy_zone"

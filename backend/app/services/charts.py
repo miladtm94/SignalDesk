@@ -429,9 +429,14 @@ def position_plan(
     sells = [t for t in kept if t["side"] == "sell"]
     committed = sum(t["size_pct"] for t in buys)
     sold = sum(t["size_pct"] for t in sells)
+    # A reduce plan is about a position already held: its Sells are measured
+    # against that position, and a re-entry or breakout Buy (a share of cash,
+    # not of the position) is shown but left out of the figures.
+    reducing = direction == "reduce" and bool(sells)
+    measured = sells if reducing else kept
     # Notional: 100 of cash for a plan that buys, else a position worth 100 at the close.
-    held = 0.0 if buys else 100 / reference
-    bought = sum(t["size_pct"] / t["price"] for t in buys)
+    held = 100 / reference if reducing or not buys else 0.0
+    bought = 0.0 if reducing else sum(t["size_pct"] / t["price"] for t in buys)
     full = held + bought
     average = committed / bought if bought else None
     cost = held * reference + committed
@@ -446,7 +451,7 @@ def position_plan(
                "reached": reached, "amount": None, "units": None}
         if tranche["side"] == "buy" and cash is not None:
             row["amount"] = cash * tranche["size_pct"] / 100
-        if tranche["side"] == "sell" and not buys and held_units > 0:
+        if tranche["side"] == "sell" and (reducing or not buys) and held_units > 0:
             row["units"] = held_units * tranche["size_pct"] / 100
         rows.append(row)
         if protective is not None and tranche["side"] == "buy" and tranche["price"] <= protective:
@@ -455,6 +460,10 @@ def position_plan(
         if average is not None and tranche["side"] == "sell" and tranche["price"] < average:
             notes.append(f"Sell {number} at {_price(tranche['price'])} is below the "
                          f"{_price(average)} average entry, so it would lock in a loss.")
+    if reducing and buys:
+        names = ", ".join(str(row["number"]) for row in rows if row["side"] == "buy")
+        notes.append(f"Buy {names} is left out of the figures and the replay: they measure the reduction "
+                     "against the position held.")
     if committed > 100:
         notes.append(f"The Buys add up to {committed:g}% of available cash, more than there is.")
     if sold > 100:
@@ -463,17 +472,22 @@ def position_plan(
     risk = full * (basis - protective) if protective is not None and basis and basis > protective else None
     reward = sum(t["size_pct"] / 100 * full * (t["price"] - basis) for t in sells) if basis and sells else None
     summary = {
-        "basis": "cash" if buys else "position", "committed_pct": committed, "sold_pct": sold,
+        "basis": "position" if reducing or not buys else "cash", "committed_pct": committed, "sold_pct": sold,
         "remaining_pct": max(0.0, 100 - sold) if sells else None, "average_entry": average,
         "stop": stop, "protective_stop": protective is not None,
         "risk_pct": risk, "reward_pct": reward,
         "reward_risk": reward / risk if risk and reward and reward > 0 else None,
         "cash": cash, "currency": (book or {}).get("currency"), "held_units": held_units or None,
     }
-    replay = _replay(kept, protective, after, reference, held) if after else None
+    replay = _replay(measured, protective, after, reference, held) if after else None
     if replay is not None:
         # What putting the whole allocation on at the analysis close, and keeping
-        # it, would have made over the same sessions: the plan's comparison.
-        replay["all_at_close_pct"] = (committed if buys else 100) * (replay["latest_close"] / reference - 1)
+        # it, would have made over the same sessions (for a reduce, holding the
+        # whole position): the plan's comparison.
+        replay["all_at_close_pct"] = (100 if held else committed) * (replay["latest_close"] / reference - 1)
+        if reducing:
+            # Fills are numbered as the table shows them.
+            numbers = [row["number"] for row in rows if row["side"] == "sell"]
+            replay["filled"] = [{**fill, "number": numbers[fill["number"] - 1]} for fill in replay["filled"]]
     return {"source": source, "reference": reference, "tranches": rows, "summary": summary,
             "replay": replay, "notes": notes}

@@ -76,8 +76,17 @@ Verify an item still applies before acting on it; strike it here when fixed.
     Picks) is not read: its terms forbid automated access. A paid API (FMP,
     Finnhub) could add point-in-time estimates for past runs.
 20. **The stance rules are a cross-check, not a model.** `price_structure._plan`
-    is deterministic and explainable; it has not been backtested. A backtest
-    metric "did the stance's buy zone/target get hit first" would calibrate it.
+    is deterministic and explainable. Checked once against outcomes: the RKLB
+    backtest of 2026-11-09 (3 Aug, 1 Sep, 30 Sep 2026; Opus/Sonnet, all
+    analysts) — the agents rated Hold/Underweight/Hold into a −15…−25% slide, the
+    old rules said "in the buy zone" each time; the momentum filter and the 3%
+    cap fixed that without changing PLTR/SPY/NVDA reads. Three cells on one
+    stock is anecdote: a stance-hit-rate backtest metric over many tickers is
+    the real calibration.
+21. **Backtest horizon.** Upstream settles each cell over 5 trading days; the
+    swing/investing plans here play out over weeks. A 20/40-session outcome (as
+    the evaluation script in the 2026-11-09 session computed) would score them
+    on their own horizon.
 
 ## Ranked ideas
 

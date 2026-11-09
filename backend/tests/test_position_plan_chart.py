@@ -260,3 +260,18 @@ def test_the_action_now_is_read_only_from_the_final_decision():
     assert decision_stance(final) == "Buy now"
     assert decision_stance(trader) is None
     assert decision_stance([RunSection(section_key="portfolio_manager", content_md="**Action Now**: not provided")]) is None
+
+
+def test_a_reduce_plan_with_a_breakout_buy_still_measures_the_sales_against_the_holding():
+    text = ("| Tranche | Side | Price | Size | Trigger |\n| --- | --- | --- | --- | --- |\n"
+            "| 1 | Sell | 67 | 50% of position | bounce |\n| 2 | Buy | 80 | 4% of available cash | breakout |\n"
+            "| 3 | Sell | 62 | 50% of position | support breaks |")
+    plan = _plan(text, direction="reduce", book={"cash": 1000, "currency": "USD", "units": 10.0})
+    assert plan["summary"]["basis"] == "position"
+    assert [t["units"] for t in plan["tranches"]] == [5.0, None, 5.0]
+    # Half sold at 62 as support broke (07-31 low 61.2), half at 67 on the bounce (08-03 high 68).
+    replay = plan["replay"]
+    assert [fill["number"] for fill in replay["filled"]] == [3, 1]
+    assert math.isclose(replay["result_pct"], 50 * (62 / 63.3 - 1) + 50 * (67 / 63.3 - 1))
+    assert math.isclose(replay["all_at_close_pct"], 100 * (72.5 / 63.3 - 1))
+    assert any("Buy 2 is left out" in note for note in plan["notes"])

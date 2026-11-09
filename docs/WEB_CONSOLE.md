@@ -217,7 +217,10 @@ choice is remembered in this browser.
   40-week (or 20-month) average and its slope, and the stance from trend and
   location (support in an uptrend is a buy, resistance in a range a sale, the
   middle of a range no edge, an extended price a wait for the pullback, a
-  downtrend no new buying). Daily and weekly views draw the swing plan, the
+  downtrend no new buying). Below the 40-week line, support is bought only once
+  momentum has turned (the 10-week average rising and the close back above it);
+  until then the stance waits for that weekly close. "Just above" a zone means
+  within half a weekly ATR and at most 3% of the price. Daily and weekly views draw the swing plan, the
   monthly view the investor plan (on a log scale).
 - **Key thresholds** under the chart list the buy zone, take-profit zones,
   trigger and invalidation with their distance from the close and what defines

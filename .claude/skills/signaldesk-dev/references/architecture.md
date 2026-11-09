@@ -216,7 +216,11 @@ missing indexes.
   price sits inside is support if the last 4 closed weeks came from above;
   trend from the slow SMA and its 4-bar slope; `_plan` → buy zone, targets
   (ATR projections when none), trigger, invalidation, stance (`STANCES`) from
-  trend × location, with new-money and holder text. `read_structure(daily,
+  trend × location, with new-money and holder text. Outside an uptrend, support
+  is a buy only when the fast SMA is rising (vs 2 bars back) and the close is
+  above it, else `wait_breakout` with the fast SMA as the reclaim trigger;
+  "just above" a zone = min(½ ATR, 3% of price) — both from the 2026-11-09 RKLB
+  backtest, where the earlier rules called a falling stock "in the buy zone". `read_structure(daily,
   as_of)`, `chart_bars`, `render_price_structure`, `build_price_structure`.
 - `tradingagents/dataflows/vendors/yahoo/street.py` — `get_analyst_coverage`:
   dated rating changes ≤ as_of (120 days listed; each firm's latest target over

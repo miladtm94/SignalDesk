@@ -69,8 +69,11 @@ def fake_settlement(*, memory_log_path, tickers, **kwargs):
         log.update_with_outcome(entry["ticker"], entry["date"], alpha + 0.01, alpha, 5,
                                 "A short lesson.", resolution_date=entry["date"])
         settled.append((entry["ticker"], entry["date"]))
+    # Shaped as the adapter's stats snapshot, the per-tool data tallies included:
+    # a settlement that summed every value failed on them.
     return {"settled": settled, "failed": [], "usage": {"llm_calls": len(settled), "tokens_in": 10,
-                                                        "tokens_out": 5, "api_equivalent_usd": 0}}
+                                                        "tokens_out": 5, "api_equivalent_usd": 0,
+                                                        "data": {"get_stock_data": {"ok": 1}}}}
 
 
 @pytest.fixture
@@ -252,4 +255,26 @@ def test_a_reached_plan_limit_stops_the_sweep_instead_of_failing_every_cell(monk
         assert client.post(f"/api/backtests/{backtest_id}/resume").status_code == 202
         body = _wait(client, backtest_id, {"completed", "failed"})
         assert body["progress"]["completed"] == 3
+        client.delete(f"/api/backtests/{backtest_id}")
+
+
+def test_a_sweep_that_failed_only_while_settling_completes_when_settled_again(monkeypatch, offline):
+    attempts = []
+
+    def flaky_settlement(**kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("benchmark prices did not load")
+        return fake_settlement(**kwargs)
+
+    monkeypatch.setattr(backtest_service, "settle_backtest", flaky_settlement)
+    with TestClient(app) as client:
+        backtest_id = client.post("/api/backtests", json=_payload(tickers=["NVDA"])).json()["backtest_id"]
+        body = _wait(client, backtest_id, {"completed", "failed"})
+        assert body["status"] == "failed" and "benchmark prices" in body["error_message"]
+        assert all(cell["status"] == "completed" for cell in body["cells"])
+
+        assert client.post(f"/api/backtests/{backtest_id}/settle").status_code == 202
+        body = _wait(client, backtest_id, {"completed"})
+        assert body["error_message"] is None and body["progress"]["scored"] == 3
         client.delete(f"/api/backtests/{backtest_id}")

@@ -271,7 +271,16 @@ class BacktestService:
     async def _settle_only(self, backtest_id: str, previous: str) -> None:
         try:
             await asyncio.to_thread(self._settle_sync, backtest_id)
-            self._set_status(backtest_id, previous)
+            with SessionLocal.begin() as session:
+                backtest = session.get(Backtest, backtest_id)
+                # A sweep that decided every cell and failed only while settling
+                # is complete once it settles; any other status stays as it was.
+                if previous == "failed" and backtest.cells and all(
+                    cell.status == "completed" for cell in backtest.cells
+                ):
+                    backtest.status, backtest.error_message = "completed", None
+                else:
+                    backtest.status = previous
         except Exception as exc:
             logger.exception("Settling backtest %s failed", backtest_id)
             with SessionLocal.begin() as session:
@@ -383,7 +392,10 @@ class BacktestService:
                 previous = summary.get("settlement") or {}
                 usage = dict(previous.get("usage") or {})
                 for key, value in outcome["usage"].items():
-                    usage[key] = round(usage.get(key, 0) + value, 6)
+                    # Counters add up; the per-tool data tallies ("data") describe
+                    # a run's evidence, not a cost, and are not kept here.
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        usage[key] = round(usage.get(key, 0) + value, 6)
                 summary["settlement"] = {
                     "settled": len(outcome["settled"]) + int(previous.get("settled", 0)),
                     "failed": [{"ticker": t, "date": d, "reason": r[:300]} for t, d, r in outcome["failed"]],

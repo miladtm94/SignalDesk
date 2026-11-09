@@ -254,13 +254,16 @@ def _where(zone: dict[str, Any], close: float) -> str:
 
 def _plan(timeframe: str, close: float, atr: float, rsi: float | None, trend: str,
           fast: float | None, slow: float | None, zones: list[dict[str, Any]],
-          last_high: float | None = None) -> dict[str, Any]:
+          last_high: float | None = None, fast_rising: bool | None = None) -> dict[str, Any]:
     """Where a position would be bought, taken profit on and given up, and what
     the trend and the price's place between the zones say to do at the close.
 
     The stance comes from trend and location: support in an uptrend is a buy,
     resistance in a range a sale, the middle of a range no edge, a downtrend no
-    new buying. Extended prices wait for a pullback.
+    new buying. Extended prices wait for a pullback. Outside an uptrend, support
+    is bought only once momentum has turned (the fast average rising, the close
+    back above it), as stage analysis has it: a falling 10-week line through a
+    support zone is a stock still being sold, and the zone tends to give way.
     """
     spec = TIMEFRAMES[timeframe]
     unit, f, s = spec["unit"], spec["fast"], spec["slow"]
@@ -313,7 +316,10 @@ def _plan(timeframe: str, close: float, atr: float, rsi: float | None, trend: st
     elif first:
         trigger = {"price": first["high"], "why": f"a {unit}ly close above the first resistance, a breakout"}
 
-    at_support = buy is not None and buy["low"] - 0.25 * atr <= close <= buy["high"] + 0.5 * atr
+    # "Just above" the zone is half an ATR, at most 3% of the price: a stock whose
+    # weekly range is a fifth of its price is not in a zone it trades 10% above.
+    at_support = buy is not None and buy["low"] - 0.25 * atr <= close <= buy["high"] + min(0.5 * atr, 0.03 * close)
+    turned = trend == "up" or (fast_rising is True and fast is not None and close >= fast)
     at_resistance = first is not None and close >= first["low"] - 0.5 * atr
     stretched = (rsi is not None and rsi >= 75) or (buy is not None and close > buy["high"] + 3 * atr)
     hot = f" with {unit}ly RSI {rsi:.0f}" if rsi is not None and rsi >= 70 else ""
@@ -327,6 +333,18 @@ def _plan(timeframe: str, close: float, atr: float, rsi: float | None, trend: st
         support = supports[0] if supports else None
         if support:
             holders += f" The nearest support is {_range(support)}."
+    elif at_support and not turned:
+        stance = "wait_breakout"
+        reclaim = fast if fast is not None and fast > close else first["high"] if first else None
+        if reclaim is not None:
+            trigger = {"price": reclaim, "why": f"a {unit}ly close back above the {f}-{unit} SMA: momentum turning up"
+                       if reclaim == fast else f"a {unit}ly close above the first resistance, a breakout"}
+        slope = "falling" if fast_rising is False else "flat"
+        new = (f"Price is at the {_range(buy)} support, but this is a correction with the {f}-{unit} SMA "
+               + (f"{slope} at {_p(fast)}" if fast is not None else "not yet turned")
+               + (f": wait for a {unit}ly close back above {_p(reclaim)} before buying" if reclaim else ": wait for momentum to turn")
+               + (f"; a {unit}ly close below {_p(invalidation['price'])} ends the setup." if invalidation else "."))
+        holders = f"Hold{keep}; do not add until momentum turns."
     elif at_support:
         stance = "buy_zone"
         where = "in" if close <= buy["high"] else "just above"
@@ -390,6 +408,8 @@ def read_structure(daily: pd.DataFrame, as_of: str | None = None) -> dict[str, A
         fast, slow, rsi = (_number(row[name]) for name in ("sma_fast", "sma_slow", "rsi14"))
         atr = _number(row["atr"]) or weekly_atr
         before = _number(ind["sma_slow"].iloc[-5]) if len(ind) >= 5 else None
+        fast_before = _number(ind["sma_fast"].iloc[-3]) if len(ind) >= 3 else None
+        fast_rising = None if fast is None or fast_before is None else fast > fast_before
         trend, trend_text = _trend(close, fast, slow, before, spec)
         # The investor's levels are the ones the monthly bars confirm, where there are any.
         own = [z for z in zones if timeframe in z["timeframes"]] if timeframe == "monthly" else zones
@@ -400,7 +420,8 @@ def read_structure(daily: pd.DataFrame, as_of: str | None = None) -> dict[str, A
             "averages": f"{spec['fast']}/{spec['slow']}-{spec['unit']} SMA",
             "plan": _plan(timeframe, close, atr, rsi, trend, fast, slow, own or zones,
                           next((p["price"] for p in reversed(points)
-                                if p["timeframe"] == timeframe and p["kind"] == "high"), None)),
+                                if p["timeframe"] == timeframe and p["kind"] == "high"), None),
+                          fast_rising),
         }
     year = frame[frame["Date"] > frame["Date"].iloc[-1] - pd.Timedelta(days=365)]
     for zone in zones:

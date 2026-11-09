@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from datetime import date, datetime
 from typing import Any
 
 import requests
@@ -178,14 +180,18 @@ def _base_currency(statement: ET.Element) -> str | None:
     return None
 
 
-def _cash(statement: ET.Element) -> tuple[float | None, bool]:
+def _cash(statement: ET.Element, base: str | None) -> tuple[float | None, bool]:
     report = statement.find("./CashReport")
     if report is None:
         return None, False
-    for row in report.findall("./CashReportCurrency"):
-        if (row.get("currency") or "").upper() == "BASE_SUMMARY":
-            return _number(row, "endingCash", "endingSettledCash"), True
-    return None, True
+    rows = {(row.get("currency") or "").upper(): row for row in report.findall("./CashReportCurrency")}
+    row = rows.get("BASE_SUMMARY")
+    if row is None:
+        # Without the base-currency total, a single currency that is the base is the same figure.
+        held = [code for code in rows if code]
+        if len(held) == 1 and (base is None or held[0] == base):
+            row = rows[held[0]]
+    return (_number(row, "endingCash", "endingSettledCash") if row is not None else None), True
 
 
 def book_from_statement(root: ET.Element) -> dict[str, Any]:
@@ -203,11 +209,12 @@ def book_from_statement(root: ET.Element) -> dict[str, Any]:
     currencies = set()
     for statement in statements:
         positions += _positions(statement, notes)
-        amount, present = _cash(statement)
+        base = _base_currency(statement)
+        amount, present = _cash(statement, base)
         cash_section |= present
         if amount is not None:
             cash_total, any_cash = cash_total + amount, True
-        currencies.add(_base_currency(statement))
+        currencies.add(base)
     if len(statements) > 1:
         merged: dict[str, dict[str, Any]] = {}
         for position in positions:
@@ -234,6 +241,9 @@ def book_from_statement(root: ET.Element) -> dict[str, Any]:
             cash = 0.0
     elif not cash_section:
         notes.append("The query has no Cash Report section, so cash is left blank; add it to bring in your cash.")
+    else:
+        notes.append("The Cash Report has no ending cash in your base currency, so cash is left blank; in the "
+                     "query's Cash Report section select all fields (Currency and Ending Cash at least).")
     if currency is None and cash is not None and len(currencies) <= 1:
         notes.append("The statement does not name its base currency; add Account Information to the query, "
                      "or set the currency yourself.")
@@ -248,8 +258,27 @@ def book_from_statement(root: ET.Element) -> dict[str, Any]:
 
 
 def _iso(day: str | None) -> str | None:
-    day = (day or "").strip()
-    return f"{day[:4]}-{day[4:6]}-{day[6:8]}" if len(day) == 8 and day.isdigit() else day or None
+    """The statement date as YYYY-MM-DD, whichever Date Format the query uses; None when unsure."""
+    day = re.split(r"[;,\s]", (day or "").strip())[0]
+    for layout in ("%Y%m%d", "%Y-%m-%d", "%d-%b-%y"):
+        try:
+            return datetime.strptime(day, layout).date().isoformat()
+        except ValueError:
+            continue
+    # Slash dates are MM/dd or dd/MM by a setting the statement does not carry: read only unambiguous ones.
+    parts = day.split("/")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    first, second, year = (int(part) for part in parts)
+    year += 2000 if year < 100 else 0
+    if first > 12 >= second:
+        first, second = second, first
+    elif not second > 12 >= first:
+        return None
+    try:
+        return date(year, first, second).isoformat()
+    except ValueError:
+        return None
 
 
 def import_book() -> dict[str, Any]:

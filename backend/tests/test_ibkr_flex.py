@@ -126,3 +126,34 @@ def test_the_endpoint_returns_the_book_for_review_and_saves_nothing(monkeypatch)
         response = client.post("/api/portfolio/ibkr")
     assert response.status_code == 400 and "IBKR_FLEX_TOKEN" in response.json()["detail"]
     assert portfolio_api.import_book is ibkr_flex.import_book
+
+
+@pytest.mark.parametrize(("written", "iso"), [
+    ("20261106", "2026-11-06"), ("2026-11-06", "2026-11-06"), ("06-Nov-26", "2026-11-06"),
+    ("11/16/2026", "2026-11-16"), ("16/11/2026", "2026-11-16"), ("16/11/26", "2026-11-16"),
+    ("11/06/2026", None),  # 6 Nov or 11 Jun: the statement does not say which, so no date beats a wrong one
+    ("20261106;101500", "2026-11-06"), ("", None), ("soon", None),
+])
+def test_the_statement_date_is_read_in_any_of_ibkr_s_date_formats(written, iso):
+    assert ibkr_flex._iso(written) == iso
+
+
+def _cash_only(report: str) -> dict:
+    statement = (f'<FlexQueryResponse><FlexStatements count="1"><FlexStatement accountId="U1234567" toDate="20261106">'
+                 f'<AccountInformation currency="AUD" /><OpenPositions /><CashReport>{report}</CashReport>'
+                 f'</FlexStatement></FlexStatements></FlexQueryResponse>')
+    return ibkr_flex.book_from_statement(ibkr_flex._parse(statement))
+
+
+def test_cash_in_the_base_currency_alone_needs_no_summary_row():
+    assert _cash_only('<CashReportCurrency currency="AUD" endingCash="500" />')["cash"] == 500.0
+    # Two currencies with no base total cannot be added up here.
+    book = _cash_only('<CashReportCurrency currency="AUD" endingCash="500" />'
+                      '<CashReportCurrency currency="USD" endingCash="70" />')
+    assert book["cash"] is None and any("Ending Cash" in note for note in book["notes"])
+
+
+def test_a_cash_report_without_ending_cash_says_which_fields_to_add():
+    book = _cash_only('<CashReportCurrency currency="BASE_SUMMARY" />')
+    assert book["cash"] is None
+    assert any("select all fields" in note for note in book["notes"])

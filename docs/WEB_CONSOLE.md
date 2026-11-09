@@ -71,12 +71,22 @@ be shared or resold, so do not expose a plan-backed console to other people.
 ## Holdings
 
 The Holdings page keeps one book: positions (signed quantities, negative for a
-short, with an optional average price and the currency it is in), free cash
-and the cash currency. A position's currency is filled in from its ticker's
+short, with an optional average price, the currency it is in and the account
+that holds it), free cash per account, and the book currency. A position's currency is filled in from its ticker's
 exchange (NVDA in USD, NXT.AX in AUD) and can be changed; the agents read it
 ("average price 180.00 USD", plus a note when it differs from the cash
 currency). The page shows each holding's latest close and unrealized P/L in that
 currency, and exactly what the decision agents will read for any ticker.
+
+**Several accounts.** Name each row's account (IBKR, Betashares, CommSec…);
+the same ticker may appear once per account. Cash is entered per account in its
+own currency, and the book's cash is their total in the **book currency**,
+converted at the day's Yahoo exchange rate when the book is saved (the page
+shows the rate used; a rate Yahoo cannot give stops the save and says so). The
+agents read the total, each account's part ("Cash by account: IBKR 170.00 USD
+(about 245.51 AUD); Betashares 100,000.00 AUD") and where each holding of the
+analysed ticker sits ("held at IBKR"). A book without accounts is stored and
+fingerprinted as before, so earlier runs resume.
 
 The book is saved in the console's database and kept for every later session.
 With **Use by default** on (the default for a new book), New analysis and New
@@ -92,12 +102,21 @@ Performance & Reports > Flex Queries, create an Activity Flex Query with the
 **Open Positions** section (and **Cash Report** for your cash; **Account
 Information** names the base currency), and turn on the Flex Web Service to get
 a token. Save the token and the query's ID in Settings as `IBKR_FLEX_TOKEN` and
-`IBKR_FLEX_QUERY_ID`. The sync loads stocks, ETFs and crypto into the editor
+`IBKR_FLEX_QUERY_ID`. In the query, select all fields of each section, keep
+the format XML, and prefer the Date Format yyyyMMdd (a MM/dd or dd/MM date whose
+day and month cannot be told apart is left out of the sync message). The sync
+loads stocks, ETFs and crypto into the editor
 under Yahoo's symbols (NXT on the ASX becomes NXT.AX, BRK B becomes BRK-B, 700
 on SEHK becomes 0700.HK), with each position's cost basis per unit in its own
 currency and the cash in the base currency; options, futures, bonds and the
-like are left out and listed in a note. Nothing is saved until you press Save
-holdings. The token is read-only: it fetches statements and cannot trade.
+like are left out and listed in a note. Everything it reads is marked with the
+account IBKR, and a later sync replaces only those rows and IBKR's cash: rows of
+other accounts stay. Rows with no account (from a sync before accounts existed)
+are replaced when IBKR lists the same ticker, an unmarked cash figure in IBKR's
+currency is replaced by IBKR's cash, and any unmarked row IBKR no longer lists is
+named in a note so you can remove it or name its account. Nothing is saved
+until you press Save holdings. The token is read-only: it fetches statements
+and cannot trade.
 
 Choosing "Decide against my book" when launching an analysis or a backtest
 gives the book to the trader, the risk analysts and the portfolio manager; the

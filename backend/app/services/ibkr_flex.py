@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 TOKEN_NAME, QUERY_NAME = "IBKR_FLEX_TOKEN", "IBKR_FLEX_QUERY_ID"
+ACCOUNT = "IBKR"
 TIMEOUT = 30
 # IBKR builds the statement after the request; these codes mean "not yet" or
 # "slow down", the rest are final (a bad token, an expired one, a bad query).
@@ -249,9 +250,13 @@ def book_from_statement(root: ET.Element) -> dict[str, Any]:
                      "or set the currency yourself.")
     first = statements[0]
     account = first.get("accountId") or ""
+    cash = round(cash, 2) if cash is not None else None
+    # Everything read here is marked as IBKR's, so a later sync replaces it and only it.
     return {
-        "cash": round(cash, 2) if cash is not None else None, "currency": currency,
-        "positions": sorted(positions, key=lambda p: p["ticker"]), "notes": list(dict.fromkeys(notes)),
+        "cash": cash, "currency": currency,
+        "positions": [{**p, "account": ACCOUNT} for p in sorted(positions, key=lambda p: p["ticker"])],
+        "cash_balances": [] if cash is None else [{"account": ACCOUNT, "amount": cash, "currency": currency}],
+        "notes": list(dict.fromkeys(notes)),
         "account": f"{account[:1]}•••{account[-3:]}" if len(account) > 4 else account or None,
         "as_of": _iso(first.get("toDate")),
     }

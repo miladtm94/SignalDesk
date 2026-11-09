@@ -32,7 +32,8 @@ def client():
 
 def test_no_saved_book_is_not_a_flat_book(client):
     assert client.get("/api/portfolio").json() == {
-        "configured": False, "cash": None, "currency": None, "positions": [], "use_by_default": False, "updated_at": None}
+        "configured": False, "cash": None, "currency": None, "positions": [], "cash_balances": [],
+            "use_by_default": False, "updated_at": None}
     saved = client.put("/api/portfolio", json={"cash": 500, "positions": []}).json()
     assert saved["configured"] is True and saved["positions"] == []
     preview = client.get("/api/portfolio/preview", params={"ticker": "NVDA"}).json()

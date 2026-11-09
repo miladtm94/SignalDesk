@@ -235,3 +235,14 @@ html{font-size:16px}.app-shell{padding-bottom:52px}.sidebar{bottom:52px;width:25
 .levels-card{padding:16px 20px 18px;border-top:1px solid #e5e4dc}.levels-heading{flex-direction:row;justify-content:space-between;align-items:flex-start;gap:12px}.levels-heading>div:first-child{display:flex;flex-direction:column;gap:3px}.levels-table{min-width:620px}.level-chip{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border-radius:5px;padding:3px 7px;white-space:nowrap}.level-buy{background:#e3f1e8;color:#25694f}.level-profit{background:#e4ecf8;color:#2f5d9e}.level-out,.level-stop{background:#f6e6e3;color:#8a4942}.level-trigger{background:#eef1eb;color:#173f35}.structure-notes{margin:10px 0 0;padding-left:16px;font-size:11.5px;line-height:1.5;color:#5f6d68}.structure-notes li+li{margin-top:2px}.tranche-fit{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;margin-top:10px;padding:10px 12px;border-radius:8px;background:#f1f4ee;font-size:12px;color:#5f6d68}.tranche-fit small{width:100%;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#83908b}.tranche-fit b{font:500 12px "DM Mono",monospace}.tranche-fit .side-buy b{color:#25694f}.tranche-fit .side-sell b{color:#2f5d9e}
 .import-notes{list-style:none;margin:10px 18px 0;padding:9px 11px;border-radius:8px;background:#f1f4ee;font-size:12px;color:#5f6d68;display:flex;flex-direction:column;gap:4px}.import-notes li{display:flex;gap:6px;align-items:flex-start}.import-notes svg{flex:none;margin-top:2px}
 @media(max-width:650px){.stance-banner{padding:12px 16px}.stance-cell{min-width:0;flex:1 1 140px}.chart-controls{padding:11px 16px 0}.levels-card{padding:14px 16px 16px}.levels-heading{flex-direction:column}.segmented button{padding:6px 10px}}
+.holdings-footer{grid-template-columns:180px 1fr}
+.cash-editor{grid-column:1/-1;display:grid;gap:8px}
+.cash-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.cash-head>span{font-size:10px;text-transform:uppercase;color:#85908c;letter-spacing:.1em}
+.cash-row{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 76px auto;gap:8px;align-items:center}
+.cash-row .currency-input{text-transform:uppercase}
+.cash-row .remove-run{padding:7px 8px}
+.cash-empty{font-size:12px;color:#76837e}
+.holdings-table .account-input{width:124px}
+@media(max-width:650px){.holdings-footer{grid-template-columns:1fr 1fr}.cash-row{grid-template-columns:1fr 76px auto}.cash-row>input:first-child{grid-column:1/-1}}
+.holdings-card .table-toolbar{flex-wrap:wrap}.holdings-card .filter-actions{flex-wrap:wrap;justify-content:flex-end}.holdings-card .filter-actions .filter{white-space:nowrap}

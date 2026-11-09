@@ -494,11 +494,22 @@ def _currency_label(value: str | None) -> str | None:
     return value or None
 
 
+def _account_label(value: str | None) -> str | None:
+    value = " ".join((value or "").split())
+    return value or None
+
+
 class PositionIn(BaseModel):
     ticker: str = Field(min_length=1, max_length=32)
     quantity: float = Field(description="Signed units held; negative is short")
     average_price: float | None = Field(default=None, gt=0)
     currency: str | None = Field(default=None, max_length=12, description="Currency of the average price")
+    account: str | None = Field(default=None, max_length=40, description="Where it is held, e.g. IBKR")
+
+    @field_validator("account")
+    @classmethod
+    def clean_account(cls, value: str | None) -> str | None:
+        return _account_label(value)
 
     @field_validator("ticker")
     @classmethod
@@ -518,12 +529,35 @@ class PositionIn(BaseModel):
         return value
 
 
+class CashBalanceIn(BaseModel):
+    """Cash held in one account, in that account's currency."""
+
+    account: str | None = Field(default=None, max_length=40)
+    amount: float = Field(ge=0)
+    currency: str | None = Field(default=None, max_length=12)
+    rate: float | None = Field(default=None, gt=0, description="Book-currency units per unit; set on save")
+
+    @field_validator("account")
+    @classmethod
+    def clean_account(cls, value: str | None) -> str | None:
+        return _account_label(value)
+
+    @field_validator("currency")
+    @classmethod
+    def clean_currency(cls, value: str | None) -> str | None:
+        return _currency_label(value)
+
+
 class PortfolioWrite(BaseModel):
-    """The caller's book: an empty positions list is a flat book, not a missing one."""
+    """The caller's book: an empty positions list is a flat book, not a missing one.
+
+    With cash_balances, cash is their total in the book's currency, worked out on save.
+    """
 
     cash: float | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, max_length=12)
     positions: list[PositionIn] = Field(default_factory=list, max_length=200)
+    cash_balances: list[CashBalanceIn] = Field(default_factory=list, max_length=20)
     # New analyses and backtests start on "decide against my book" when set.
     use_by_default: bool = False
 
@@ -535,11 +569,14 @@ class PortfolioWrite(BaseModel):
     @field_validator("positions")
     @classmethod
     def one_row_per_ticker(cls, value: list[PositionIn]) -> list[PositionIn]:
-        seen: set[str] = set()
+        # The same instrument may be held at two brokers, but once per account.
+        seen: set[tuple[str, str]] = set()
         for position in value:
-            if position.ticker in seen:
-                raise ValueError(f"{position.ticker} is listed twice; combine it into one position")
-            seen.add(position.ticker)
+            key = (position.ticker, (position.account or "").lower())
+            if key in seen:
+                where = f" in {position.account}" if position.account else ""
+                raise ValueError(f"{position.ticker} is listed twice{where}; combine it into one position")
+            seen.add(key)
         return value
 
 
@@ -548,6 +585,7 @@ class PortfolioOut(BaseModel):
     cash: float | None = None
     currency: str | None = None
     positions: list[PositionIn] = Field(default_factory=list)
+    cash_balances: list[CashBalanceIn] = Field(default_factory=list)
     use_by_default: bool = False
     updated_at: datetime | None = None
 
@@ -558,6 +596,7 @@ class IbkrBookOut(BaseModel):
     cash: float | None = None
     currency: str | None = None
     positions: list[PositionIn] = Field(default_factory=list)
+    cash_balances: list[CashBalanceIn] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     account: str | None = None
     as_of: str | None = None

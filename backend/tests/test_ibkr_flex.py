@@ -72,11 +72,14 @@ def test_the_book_reads_positions_in_yahoo_symbols_and_cash_in_the_base_currency
     assert book["cash"] == 8421.55 and book["currency"] == "AUD"
     assert book["account"] == "U•••567" and book["as_of"] == "2026-11-06"
     assert book["positions"] == [
-        {"ticker": "0700.HK", "quantity": 100.0, "average_price": 380.0, "currency": "HKD"},
-        {"ticker": "BRK-B", "quantity": 4.0, "average_price": 455.1, "currency": "USD"},
-        {"ticker": "BTC-USD", "quantity": 0.05, "average_price": 61000.0, "currency": "USD"},
-        {"ticker": "NXT.AX", "quantity": 250.0, "average_price": 12.4, "currency": "AUD"},  # the summary, not lot + summary
+        {"ticker": "0700.HK", "quantity": 100.0, "average_price": 380.0, "currency": "HKD", "account": "IBKR"},
+        {"ticker": "BRK-B", "quantity": 4.0, "average_price": 455.1, "currency": "USD", "account": "IBKR"},
+        {"ticker": "BTC-USD", "quantity": 0.05, "average_price": 61000.0, "currency": "USD", "account": "IBKR"},
+        # The summary, not lot + summary.
+        {"ticker": "NXT.AX", "quantity": 250.0, "average_price": 12.4, "currency": "AUD", "account": "IBKR"},
     ]
+    # Marked as IBKR's, so a later sync replaces these and leaves other accounts alone.
+    assert book["cash_balances"] == [{"account": "IBKR", "amount": 8421.55, "currency": "AUD"}]
     assert any("Left out 1 options position" in note for note in book["notes"])
 
 

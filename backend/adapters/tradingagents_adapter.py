@@ -484,21 +484,43 @@ def _build_config(
 # --- the caller's book --------------------------------------------------------------
 
 
-class ConsolePosition(Position):
+class PricedPosition(Position):
     currency: str | None = Field(default=None, description="Currency of the average price, e.g. USD or AUD")
 
 
+class ConsolePosition(PricedPosition):
+    account: str | None = Field(default=None, description="Where it is held, e.g. IBKR or Betashares")
+
+
+class CashBalance(BaseModel):
+    """Cash in one account, in that account's currency."""
+
+    account: str | None = None
+    amount: float
+    currency: str | None = None
+    # Units of the book's currency per unit of this one, when the two differ.
+    rate: float | None = None
+
+
+class _PricedBook(PortfolioContext):
+    """The book as saved before accounts: what such a book's fingerprint is taken over."""
+
+    positions: list[PricedPosition] = Field(default_factory=list)
+
+
 class ConsolePortfolio(PortfolioContext):
-    """Upstream's book, with the currency of each position's average price.
+    """Upstream's book, with each position's price currency and account, and cash per account.
 
     A mixed book (US shares bought in USD, ASX shares in AUD, cash in AUD) would
-    otherwise reach the agents as bare prices beside one currency label. Upstream
-    only calls ``render`` and ``fingerprint`` on the book, so this subclass changes
-    what the agents read without touching upstream; a book without position
-    currencies renders and fingerprints exactly as upstream's does.
+    otherwise reach the agents as bare prices beside one currency label, and cash
+    spread over brokers as one sum without its parts. Upstream only calls
+    ``render`` and ``fingerprint`` on the book, so this subclass changes what the
+    agents read without touching upstream; a book without these extras renders
+    and fingerprints exactly as it did before them.
     """
 
     positions: list[ConsolePosition] = Field(default_factory=list)
+    cash_balances: list[CashBalance] = Field(default_factory=list)
 
     def render(self, ticker: str) -> str:
         lines = super().render(ticker).split("\n")
@@ -507,28 +529,50 @@ class ConsolePortfolio(PortfolioContext):
         rows = [i for i, line in enumerate(lines) if line.startswith("- Current position in ")]
         notes: list[str] = []
         for row, held in zip(rows, self.positions_in(ticker), strict=False):
-            if not held.currency or held.average_price is None:
-                continue
-            price = f", average price {held.average_price:,.2f}"
-            lines[row] = lines[row].replace(price, f"{price} {held.currency}", 1)
-            note = f"- The average price is in {held.currency}; cash is in {self.currency}."
-            if self.currency and held.currency != self.currency and note not in notes:
-                notes.append(note)
+            if held.currency and held.average_price is not None:
+                price = f", average price {held.average_price:,.2f}"
+                lines[row] = lines[row].replace(price, f"{price} {held.currency}", 1)
+                note = f"- The average price is in {held.currency}; cash is in {self.currency}."
+                if self.currency and held.currency != self.currency and note not in notes:
+                    notes.append(note)
+            if held.account:
+                lines[row] += f", held at {held.account}"
+        if len(self.cash_balances) > 1 or any(b.currency and b.currency != self.currency for b in self.cash_balances):
+            parts = []
+            for balance in self.cash_balances:
+                amount = f"{balance.amount:,.2f} {balance.currency or self.currency or ''}".strip()
+                if balance.rate and balance.currency != self.currency:
+                    amount += f" (about {balance.amount * balance.rate:,.2f} {self.currency})"
+                parts.append(f"{balance.account or 'unnamed account'} {amount}")
+            cash = next((i for i, line in enumerate(lines) if line.startswith("- Cash available:")), len(lines) - 1)
+            lines.insert(cash + 1, "- Cash by account: " + "; ".join(parts))
         return "\n".join(lines + notes)
 
     def fingerprint(self) -> str:
-        if any(p.currency for p in self.positions):
+        if self.cash_balances or any(p.account for p in self.positions):
             return super().fingerprint()
-        # Unchanged for a book saved before positions had a currency, so its runs resume.
-        return PortfolioContext.model_validate(self.model_dump(exclude={"positions": {"__all__": {"currency"}}})).fingerprint()
+        # Unchanged for a book saved before accounts (or before position currencies), so its runs resume.
+        book = self.model_dump(exclude={"cash_balances": True, "positions": {"__all__": {"account"}}})
+        if any(p.currency for p in self.positions):
+            return _PricedBook.model_validate(book).fingerprint()
+        return PortfolioContext.model_validate(
+            self.model_dump(exclude={"cash_balances": True, "positions": {"__all__": {"currency", "account"}}})
+        ).fingerprint()
 
 
 def normalize_portfolio(data: dict[str, Any]) -> dict[str, Any]:
     """The book as upstream reads it; raises ValueError naming what is wrong."""
     try:
-        return ConsolePortfolio.model_validate(data).model_dump(mode="json")
+        book = ConsolePortfolio.model_validate(data).model_dump(mode="json")
     except ValidationError as exc:
         raise ValueError(str(exc)) from None
+    # A book without accounts keeps the shape it had before them.
+    if not book["cash_balances"]:
+        del book["cash_balances"]
+    for position in book["positions"]:
+        if position.get("account") is None:
+            position.pop("account", None)
+    return book
 
 
 def _portfolio(snapshot: dict[str, Any] | None) -> PortfolioContext | None:

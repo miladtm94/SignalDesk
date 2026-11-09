@@ -35,13 +35,46 @@ def used_by_default() -> bool:
         return bool(row is not None and isinstance(row.value, dict) and row.value.get("use_by_default"))
 
 
+def exchange_rate(source: str, target: str) -> float:
+    """Units of ``target`` per unit of ``source`` at the latest daily close; raises ValueError."""
+    try:
+        chart = load_current_market_chart(f"{source}{target}=X", limit=5)
+        rate = float(chart.candles[-1]["close"])
+    except Exception as exc:
+        raise ValueError(f"{source} cash could not be converted to {target}: no exchange rate "
+                         f"({type(exc).__name__}). Try again, or enter that cash in {target}.") from exc
+    if not rate > 0:
+        raise ValueError(f"{source} cash could not be converted to {target}: no exchange rate.")
+    return rate
+
+
+def _total_cash(data: dict[str, Any]) -> dict[str, Any]:
+    """Cash per account totalled in the book's currency, each balance keeping the rate it was taken at."""
+    balances = data.get("cash_balances") or []
+    if not balances:
+        return data
+    named = {b["currency"] for b in balances if b.get("currency")}
+    currency = data.get("currency") or (next(iter(named)) if len(named) == 1 else None)
+    if currency is None:
+        raise ValueError(f"Cash is held in {' and '.join(sorted(named))}: name the book's currency to total it in.")
+    rates: dict[str, float] = {currency: 1.0}
+    total = 0.0
+    for balance in balances:
+        held = balance.get("currency") or currency
+        if held not in rates:
+            rates[held] = exchange_rate(held, currency)
+        balance["currency"], balance["rate"] = held, None if held == currency else round(rates[held], 6)
+        total += balance["amount"] * rates[held]
+    return {**data, "currency": currency, "cash": round(total, 2)}
+
+
 def save_book(payload: PortfolioWrite) -> tuple[dict[str, Any], datetime]:
     """Validate the book as upstream reads it, then keep it; raises ValueError when unusable.
 
     The launch default is kept beside the book, not in it: a run's snapshot is
     the book alone.
     """
-    book = normalize_portfolio(payload.model_dump(mode="json", exclude={"use_by_default"}))
+    book = normalize_portfolio(_total_cash(payload.model_dump(mode="json", exclude={"use_by_default"})))
     value = {"book": book, "use_by_default": payload.use_by_default}
     with SessionLocal.begin() as session:
         row = session.get(AppPreference, PREFERENCE_KEY)
@@ -68,8 +101,8 @@ def clear_book() -> bool:
 def quotes(book: dict[str, Any]) -> list[dict[str, Any]]:
     """The latest daily close of every held instrument, each in its own quote currency."""
     result = []
-    for position in book.get("positions", []):
-        ticker = position["ticker"]
+    # A ticker held in two accounts is priced once.
+    for ticker in dict.fromkeys(position["ticker"] for position in book.get("positions", [])):
         try:
             chart = load_current_market_chart(ticker, limit=5)
             result.append({"ticker": ticker, "last_close": chart.candles[-1]["close"], "as_of": chart.as_of})

@@ -338,9 +338,11 @@ export type RunPayload = {
 };
 
 // currency: what the average price is in (USD for NVDA, AUD for NXT.AX); the book's own currency labels the cash.
-export type Position = { ticker: string; quantity: number; average_price: number | null; currency?: string | null };
+export type Position = { ticker: string; quantity: number; average_price: number | null; currency?: string | null; account?: string | null };
+/** Cash held in one account, in its own currency; rate converts it to the book's currency (set on save). */
+export type CashBalance = { account: string | null; amount: number; currency: string | null; rate?: number | null };
 // use_by_default: new analyses and backtests start on deciding against this book.
-export type Portfolio = { cash: number | null; currency: string | null; positions: Position[]; use_by_default?: boolean };
+export type Portfolio = { cash: number | null; currency: string | null; positions: Position[]; cash_balances?: CashBalance[]; use_by_default?: boolean };
 export type SavedPortfolio = Portfolio & { configured: boolean; use_by_default: boolean; updated_at: string | null };
 export type PortfolioPreview = { ticker: string; held: Position | null; context: string };
 export type Quote = { ticker: string; last_close: number | null; as_of: string | null; error: string | null };

@@ -59,12 +59,21 @@ Expect merge conflicts here; keep both sides.
 | `tradingagents/output_languages.py` | Shared CLI/console language list (fork-owned file) |
 | `tradingagents/dataflows/vendors/yahoo/common.py` | `hide_yfinance_inplace_deprecations()`: silences pandas 3.1's `inplace` deprecation raised inside yfinance 1.7.0; drop it once yfinance stops using `inplace` |
 | `tradingagents/dataflows/vendors/google_news.py` | Google News search vendor for company and market news over any date window (fork-owned file) |
-| `tradingagents/dataflows/router.py` | Registers `google_news` for `get_news` and `get_global_news` |
-| `tradingagents/default_config.py` | `news_data` defaults to `google_news,yfinance`: Yahoo's feed holds only recent items, so a past run had no news |
-| `tests/test_dataflows_config.py` | Asserts that new `news_data` default |
+| `tradingagents/dataflows/router.py` | Registers `google_news` for `get_news` and `get_global_news`, and `stockanalysis` for `get_fundamentals` and the three statements |
+| `tradingagents/default_config.py` | `news_data` defaults to `google_news,yfinance`: Yahoo's feed holds only recent items, so a past run had no news; `fundamental_data` ends with `stockanalysis` as the last resort |
+| `tradingagents/dataflows/vendors/stockanalysis.py`, `tests/test_stockanalysis.py` | Fork-owned: the StockAnalysis fallback (robots.txt checked, 3 s between requests, 6 h cache, today only) |
+| `tests/test_dataflows_config.py` | Asserts the new `news_data` and `fundamental_data` defaults |
 | `tradingagents/agents/analysts/sentiment_analyst.py` | The news block's heading no longer names Yahoo (the block names its source) |
 | `tradingagents/agents/analysts/turn.py` | `_report`: a report written beside the last tool call is kept when the final reply only points back to it |
 | `tradingagents/dataflows/vendors/yahoo/market.py` | A day after the newest bar reads "no closed session yet", not "weekend or holiday" |
+| `tradingagents/dataflows/vendors/polymarket.py` | A network that intercepts the host (Australian ISPs answer for Polymarket with `block.acma.gov.au`'s certificate) pauses the vendor for 15 minutes after one failure; its failures start with `DATA_UNAVAILABLE` so data coverage reads them as unavailable |
+| `tradingagents/agents/schemas.py` | `Tranche` and `tranches` on `TraderProposal` and `PortfolioDecision` (plus the PM's `stop_loss`), rendered as a fixed **Position Plan** table; `SCALING_GUIDANCE` and `POSITION_PLAN_OUTPUT` prompt text; `ExecutionStance` and the PM's optional `action_now`, rendered as `**Action Now**` after the rating (`STANCE_DESCRIPTION`) |
+| `tradingagents/agents/trader/trader.py`, `tradingagents/agents/managers/portfolio_manager.py` | Ask for the scaled plan (Buys as a share of available cash, Sells as a share of the position); the PM finalises the trader's tranches and states the Action Now; the trader places Buys in the weekly/monthly buy zone |
+| `tradingagents/agents/analysts/market_analyst.py` | Offers `get_price_structure`; closes the report with the daily/weekly/monthly trend regime, the swing pattern and a table of the buy zone, take-profit zones, trigger and invalidation |
+| `tradingagents/agents/analysts/fundamentals_analyst.py` | Offers `get_analyst_coverage` and asks for the beat/miss record, estimate revisions and the consensus target's distance |
+| `tradingagents/agents/signaldesk_tools.py`, `tradingagents/dataflows/price_structure.py`, `tradingagents/dataflows/vendors/yahoo/street.py` | Fork-owned: the two tools, the weekly/monthly structure engine (also drawn by the console's chart) and Yahoo analyst coverage. They call their modules directly, not through `router.py`, so the router stays upstream's |
+| `tests/test_price_structure.py`, `tests/test_analyst_coverage.py` | Fork-owned tests of the above |
+| `tests/test_structured_agents.py`, `tests/test_polymarket.py` | The trader names the plan it did not give; the blocked-host pause |
 | `pyproject.toml` | The `claude` extra (Agent SDK's bundled Claude Code) |
 | `Dockerfile`, `docker-compose.yml` | `WITH_CLAUDE_CODE` build arg, `CLAUDE_CONFIG_DIR`, console services |
 | `README.md`, `.env.example`, `Makefile` | Fork documentation and targets |

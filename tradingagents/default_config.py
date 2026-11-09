@@ -160,7 +160,8 @@ def build_default_config() -> dict:
             "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
             # Statements come from SEC EDGAR as filed (US filers), then Yahoo; the
         # overview and insider tools, which SEC EDGAR does not serve, from Yahoo.
-        "fundamental_data": "sec_edgar,yfinance",  # Options: sec_edgar, alpha_vantage, yfinance
+        # StockAnalysis is the last resort when both fail (today's figures only).
+        "fundamental_data": "sec_edgar,yfinance,stockanalysis",  # Options: sec_edgar, alpha_vantage, yfinance, stockanalysis
             # Google News search serves any date window (Yahoo's feed holds only
             # recent items, so a past run found no news); Yahoo if Google is down.
             "news_data": "google_news,yfinance",  # Options: google_news, alpha_vantage, yfinance

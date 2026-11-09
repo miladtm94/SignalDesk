@@ -145,6 +145,123 @@ export type ChartCandle = {
   high: number;
   low: number;
   close: number;
+  volume?: number | null;
+};
+
+export type ChartPoint = { time: string; value: number };
+export type PriceLevel = { price: number; touches: number; last_date: string };
+export type Tone = "bullish" | "bearish" | "neutral";
+export type TechnicalRead = {
+  date: string;
+  close: number;
+  bias: Tone;
+  score: number;
+  signals: { name: string; tone: Tone; text: string }[];
+  notes: string[];
+  supports: PriceLevel[];
+  resistances: PriceLevel[];
+  values: Record<string, number | null>;
+};
+export type ChartTechnicals = {
+  series: Record<string, ChartPoint[]>;
+  crosses: { time: string; kind: "golden" | "death" }[];
+  analysis: TechnicalRead | null;
+  latest: TechnicalRead | null;
+};
+export type PlanTranche = {
+  number: number;
+  side: "buy" | "sell";
+  price: number;
+  size_pct: number;
+  trigger: string;
+  distance_pct: number;
+  reached: string | null;
+  amount: number | null;
+  units: number | null;
+};
+export type PositionPlan = {
+  source: string | null;
+  reference: number;
+  tranches: PlanTranche[];
+  summary: {
+    basis: "cash" | "position";
+    committed_pct: number;
+    sold_pct: number;
+    remaining_pct: number | null;
+    average_entry: number | null;
+    stop: number | null;
+    protective_stop: boolean;
+    risk_pct: number | null;
+    reward_pct: number | null;
+    reward_risk: number | null;
+    cash: number | null;
+    currency: string | null;
+    held_units: number | null;
+  } | null;
+  replay: {
+    filled: { number: number; date: string }[];
+    stopped: { date: string; price: number } | null;
+    result_pct: number;
+    all_at_close_pct: number;
+    open_pct: number;
+    latest_close: number;
+    sessions: number;
+  } | null;
+  notes: string[];
+};
+
+export type StructureZone = {
+  low: number;
+  high: number;
+  mid: number;
+  kind: "support" | "resistance";
+  touches: number;
+  timeframes: string[];
+  last_date: string;
+  contains_price: boolean;
+  distance_pct: number;
+};
+export type StructureRegion = { low: number; high: number; why: string };
+export type Stance = "buy_zone" | "wait_pullback" | "wait_breakout" | "hold" | "take_profit" | "avoid";
+export type StructurePlan = {
+  stance: Stance;
+  label: string;
+  text: string;
+  new_money: string;
+  holders: string;
+  buy_zone: StructureRegion | null;
+  targets: StructureRegion[];
+  targets_projected: boolean;
+  invalidation: { price: number; why: string } | null;
+  trigger: { price: number; why: string } | null;
+};
+export type TimeframeRead = {
+  lens: string;
+  unit: string;
+  bars: number;
+  trend: "up" | "down" | "range";
+  trend_text: string;
+  structure_text: string | null;
+  sma_fast: number | null;
+  sma_slow: number | null;
+  rsi14: number | null;
+  atr: number;
+  averages: string;
+  plan: StructurePlan;
+};
+export type StructureRead = {
+  as_of: string;
+  close: number;
+  zones: StructureZone[];
+  timeframes: Record<"weekly" | "monthly", TimeframeRead>;
+  range: Record<string, number | string>;
+};
+export type StructureFrame = { unit: string; fast: number; slow: number; candles: ChartCandle[]; series: Record<string, ChartPoint[]> };
+export type PriceStructure = {
+  frames: Record<"weekly" | "monthly", StructureFrame>;
+  analysis: StructureRead | null;
+  latest: StructureRead | null;
+  stances: Record<string, string>;
 };
 
 export type StrategyLevel = {
@@ -178,7 +295,12 @@ export type RunChart = {
   direction: "long" | "hold" | "reduce" | null;
   notes: string[];
   outcome: AnalysisOutcome | null;
+  technicals: ChartTechnicals | null;
+  plan: PositionPlan | null;
+  structure: PriceStructure | null;
+  action_now: string | null;
 };
+export type IbkrBook = Portfolio & { notes: string[]; account: string | null; as_of: string | null };
 
 export type SecretMask = { name: string; configured: boolean; masked_value: string | null };
 export type Preferences = {
@@ -332,6 +454,7 @@ export const api = {
   clearPortfolio: () => request<void>("/api/portfolio", { method: "DELETE" }),
   portfolioPreview: (ticker: string) => request<PortfolioPreview>(`/api/portfolio/preview?ticker=${encodeURIComponent(ticker)}`),
   portfolioQuotes: () => request<Quote[]>("/api/portfolio/quotes"),
+  importIbkr: () => request<IbkrBook>("/api/portfolio/ibkr", { method: "POST" }),
   backtests: () => request<BacktestSummary[]>("/api/backtests"),
   backtest: (id: string) => request<BacktestDetail>(`/api/backtests/${id}`),
   backtestGrid: (start: string, end: string, every: number, tickers: number) => request<{ dates: string[]; cells: number; max_cells: number }>(`/api/backtests/grid?start_date=${start}&end_date=${end}&every_n_days=${every}&tickers=${Math.max(1, tickers)}`),

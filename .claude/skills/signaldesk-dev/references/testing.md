@@ -1,6 +1,16 @@
 # Testing reference
 
-## Last known results (2026-11-03, `main`: v0.7.1 merge + data-reliability work)
+## Last known results (2026-11-09, uncommitted on `main`: weekly/monthly zones, analyst coverage, IBKR Flex)
+
+- Core suite: 1532 passed, 1 skipped. Console suite: 128 passed. Lint, `tsc -b`, `vite build`: clean.
+- Live Yahoo (no LLM): `get_price_structure` on PLTR, NXT.AX, BTC-USD, SPY and
+  `get_analyst_coverage` on PLTR (today and 2026-08-04), NXT.AX, SPY/BTC-USD (no
+  coverage) read as expected. UI checked headless at 1440 and 390 px on seeded
+  runs (weekly/monthly/daily zones, stance banner, key thresholds, IBKR error
+  path). Not yet run: a live LLM run using the two new tools and Action Now; a
+  real IBKR Flex statement.
+
+## Earlier results (2026-11-03, `main`: v0.7.1 merge + data-reliability work)
 
 - Core suite (`tests/`): 1489 passed, 1 skipped (macOS included, nothing deselected).
 - Console suite (`backend/tests/`): 98 passed (1 opt-in integration test deselected).

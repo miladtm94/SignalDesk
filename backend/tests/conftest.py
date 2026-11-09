@@ -20,3 +20,12 @@ def _fresh_launch_limit():
     runs._launches.clear()
     yield
     runs._launches.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_price_structure(monkeypatch):
+    """The chart's weekly and monthly views read five years of prices from Yahoo;
+    a test that wants them supplies its own bars."""
+    from backend.app.api import runs
+
+    monkeypatch.setattr(runs, "load_price_structure", lambda ticker, trade_date: None)

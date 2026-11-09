@@ -21,6 +21,8 @@ from backend.tests.test_adapter_graph import ScriptedModel, _run, offline  # noq
     ("# Insider Transactions for FCX\n# Point-in-time as of: 2026-07-30\n\nInsider transactions are withheld for "
      "this date.", "withheld"),
     ("Prediction-market odds are withheld for 2026-07-30. Polymarket serves only live odds.", "withheld"),
+    ("DATA_UNAVAILABLE: Polymarket prediction markets are unavailable (the network answers for "
+     "gamma-api.polymarket.com with another site's certificate). Proceed without it.", "unavailable"),
     ("No headlines about Freeport-McMoRan (FCX) published between 2026-07-23 and 2026-07-30 were found.", "empty"),
     ("Error: ValueError('bad indicator')\n Please fix your mistakes.", "error"),
     ("start_date 'last week' is not a date; give it as YYYY-MM-DD", "error"),

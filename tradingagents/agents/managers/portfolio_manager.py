@@ -16,7 +16,13 @@ from tradingagents.agents.context import (
     get_portfolio_context_from_state,
 )
 from tradingagents.agents.rating import parse_rating
-from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
+from tradingagents.agents.schemas import (
+    POSITION_PLAN_OUTPUT,
+    SCALING_GUIDANCE,
+    STANCE_DESCRIPTION,
+    PortfolioDecision,
+    render_pm_decision,
+)
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
 
 
@@ -70,8 +76,13 @@ Ground every conclusion in specific evidence from the analysts. The risk debate 
 Write these sections, in this order, starting with the rating on its own line:
 
 - **Rating**: exactly one of Buy / Overweight / Hold / Underweight / Sell
+- **Action Now**: exactly one of Buy now / Wait for pullback / Wait for breakout / Hold / Take profit / Exit / Avoid -- {STANCE_DESCRIPTION}
 - **Executive Summary**: the call and how to act on it
 - **Investment Thesis**: the evidence that decided it, and what would change it
+- **Price Target** and **Stop Loss**: as absolute prices, when you can state them
+- {POSITION_PLAN_OUTPUT}
+
+The position plan is the final word on execution: start from the trader's tranches, then resize, reprice or drop them as the risk debate warrants (the conservative case for smaller first tranches, the aggressive case for adding on confirmation). {SCALING_GUIDANCE}
 
 {NO_EXTERNAL_TOOLS}{get_language_instruction()}"""
 

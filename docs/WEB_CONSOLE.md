@@ -86,6 +86,19 @@ its data volume, `make web-dev` in `backend/data/`), so **Export** downloads the
 book as a JSON file and **Import** loads one into the editor (press Save to keep
 it). The same file works with the CLI's `--portfolio`.
 
+**Sync from IBKR** reads the book from Interactive Brokers through the Flex Web
+Service, with no TWS or gateway running. In IBKR's Client Portal, open
+Performance & Reports > Flex Queries, create an Activity Flex Query with the
+**Open Positions** section (and **Cash Report** for your cash; **Account
+Information** names the base currency), and turn on the Flex Web Service to get
+a token. Save the token and the query's ID in Settings as `IBKR_FLEX_TOKEN` and
+`IBKR_FLEX_QUERY_ID`. The sync loads stocks, ETFs and crypto into the editor
+under Yahoo's symbols (NXT on the ASX becomes NXT.AX, BRK B becomes BRK-B, 700
+on SEHK becomes 0700.HK), with each position's cost basis per unit in its own
+currency and the cash in the base currency; options, futures, bonds and the
+like are left out and listed in a note. Nothing is saved until you press Save
+holdings. The token is read-only: it fetches statements and cannot trade.
+
 Choosing "Decide against my book" when launching an analysis or a backtest
 gives the book to the trader, the risk analysts and the portfolio manager; the
 analysts and researchers stay position-neutral, as upstream designs them. Three
@@ -132,9 +145,34 @@ Google does not answer. Headlines are kept to the analysis window by their
 publication date, and a past window is cached, so re-running the same date reads
 the same news.
 
+The fundamentals analyst also reads **analyst coverage** from Yahoo Finance, the
+data research sites show on a stock's forecast and statistics pages: rating
+upgrades and downgrades with each firm's price-target change, a consensus target
+built from each firm's latest target in the six months to the analysis date,
+the earnings record (estimate, reported EPS, surprise) and the next report
+date, and for a run dated today the consensus target and rating, the
+recommendation trend, EPS and revenue estimates with their 30- and 90-day
+revisions, short interest, ownership and EV multiples. The market analyst reads
+the **weekly and monthly price structure** (see the chart below): the same zones
+the chart draws, so the trader's and portfolio manager's tranches are set
+against them.
+
+**StockAnalysis.com is the backup.** When SEC EDGAR and Yahoo both fail for the
+company overview or a statement, or Yahoo cannot serve analyst coverage, the
+same data is read from StockAnalysis's statistics, financials and forecast pages
+(US listings and ASX, LSE, TSX and other exchanges). Its terms allow automated
+access only to crawlers that follow its robots.txt, so SignalDesk checks
+robots.txt before every request, names itself in the User-Agent, waits three
+seconds between requests and caches each page for six hours; cells behind its
+paid plan stay dashes. Its pages are today's, so a past-dated run never uses
+it. Seeking Alpha (including Alpha Picks) is not read: its terms forbid
+automated access, and Alpha Picks is subscription content.
+
 Some data exists only as of today and is withheld from a past date rather than
-leaked into it: Yahoo's company profile and valuation, insider trades without a
-filing date, and prediction-market odds. StockTwits and Reddit serve only recent
+leaked into it: Yahoo's company profile and valuation, the analyst consensus,
+estimates, short interest and ownership, insider trades without a filing date,
+and prediction-market odds. Dated records are served as of the analysis date:
+rating changes made by then, and quarters reported before that day's close. StockTwits and Reddit serve only recent
 posts, so the sentiment analyst has no social feed for a past date and says so.
 
 ## Reading a report
@@ -145,8 +183,8 @@ as it is:
 - Tables render as tables, and in columns that interpret a figure
   (Interpretation, Signal, Bias…) each cell gets 🟢, 🔴 or 🟡 for bullish,
   bearish, or mixed and cautious wording.
-- The decision fields (Rating, Action, Entry Price, Stop Loss, Price Target,
-  Time Horizon) appear as tiles at the top of the section, and the trader's
+- The decision fields (Rating, Action Now, Action, Entry Price, Stop Loss,
+  Price Target, Time Horizon) appear as tiles at the top of the section, and the trader's
   `FINAL TRANSACTION PROPOSAL` appears as a banner at the end.
 - Longer fields (Executive Summary, Investment Thesis, Strategic Actions…) are
   labelled blocks, and headings get an emoji for their topic (📈 trend,
@@ -157,8 +195,35 @@ as it is:
 The markers and emojis are reading aids picked from the words used, not extra
 analysis. The Markdown download is the agents' text unchanged.
 
-The chart above the report shows the daily candles from a few weeks before the
-analysis date to today, with an **Analysis** marker on the date the run used.
+The chart above the report shows the price from before the analysis date to
+today, with an **Analysis** marker on the date (or the week or month) the run
+used. **Daily**, **Weekly** and **Monthly** switch the candles; weekly is the
+default, since a swing trade or an investment is held for weeks to months. The
+choice is remembered in this browser.
+
+- **What to do now.** A banner above the chart puts the portfolio manager's
+  **Action Now** (Buy now, Wait for pullback, Wait for breakout, Hold, Take
+  profit, Exit or Avoid) beside the chart's own stance on the weekly (swing) and
+  monthly (investor) bars. A Buy rating can still be "Wait for pullback": the
+  rating says which way the evidence points, the action whether the price is
+  where to act. Under it, what new money and what holders should do.
+- **Buy and take-profit zones.** Shaded on every timeframe: the buy zone in
+  green, take-profit zones in blue (red "sell into strength" zones in a
+  downtrend; dashed when projected from the ATR because no swing high sits above
+  the price), other support and resistance faintly, the invalidation level as a
+  red dashed line and the breakout (or trend-turn) trigger as a dark one. They
+  come from fixed rules: swing highs and lows of the weekly and monthly bars
+  clustered into zones at least half a weekly ATR wide, the trend from the
+  40-week (or 20-month) average and its slope, and the stance from trend and
+  location (support in an uptrend is a buy, resistance in a range a sale, the
+  middle of a range no edge, an extended price a wait for the pullback, a
+  downtrend no new buying). Daily and weekly views draw the swing plan, the
+  monthly view the investor plan (on a log scale).
+- **Key thresholds** under the chart list the buy zone, take-profit zones,
+  trigger and invalidation with their distance from the close and what defines
+  each, the trend and swing pattern, and where each of the decision's tranches
+  falls against them (in the buy zone, below the invalidation level...). Read
+  them at the analysis date (what the market analyst was given) or today.
 
 - **Levels read for the decision's side.** The entry, target and stop that the
   portfolio manager, research manager or trader labelled are named for what the
@@ -171,6 +236,38 @@ analysis date to today, with an **Analysis** marker on the date the run used.
 - **The outcome since the analysis**: the close the analysis saw, the latest
   close and the change, the highest and lowest prices since, and the date each
   level was first reached. This is how to judge a call after the fact.
+- **Trend and momentum layers**, switched on and off with the chips above the
+  chart (the choice is remembered in this browser): the 10-day EMA, 50-day and
+  200-day SMAs (golden and death crosses are marked), Bollinger bands (20, 2),
+  support and resistance from swing pivots, and panes for volume with its
+  20-day average, RSI 14 with its 70/30 bounds, and MACD 12/26/9. These are the
+  indicators the market analyst is offered, computed over enough earlier history
+  that the 200-day average is defined from the chart's first day. Hovering shows
+  each value on that day.
+- **The position plan.** The trader and the portfolio manager plan entries and
+  exits in tranches, each with a price, a size and the level behind it: Buys as
+  a share of the available cash (the book's cash when the run used it), Sells as
+  a share of the position. The tranches are drawn as B1, B2… and S1, S2… lines
+  with their sizes, and the table under the chart lists each one with its
+  distance from the analysis close and when it was first reached. Beneath it:
+  how much cash the Buys commit, the cost-weighted average entry, the loss if
+  every Buy fills and the stop is then hit, the gain if every Sell fills,
+  reward-to-risk, and what is left to run. The plan is then traded on the
+  sessions since the analysis (a tranche fills when a bar trades through it; a
+  bar that touched both a tranche and the stop is read as the stop coming last)
+  and compared with putting the whole allocation on at the analysis close.
+  Figures are percentages of the available cash, or of the position's value at
+  the close for a plan that only sells; amounts in your currency appear where
+  the run's book gives them (the cash a Buy commits, the units a Sell takes off
+  a holding). The final decision's plan is used, else the trader's.
+- **A rule-based technical read** at the analysis date and now: trend (the close
+  against the 50- and 200-day averages), swing structure (higher highs and lows,
+  lower, a narrowing or widening range, or a breakout from it), RSI, MACD, and
+  whether volume is heavier on up days or down days, each scored and summed into
+  a bias; the nearest support and resistance with how many swings formed them;
+  ATR; the 52-week range; and a note on a Bollinger squeeze. The same rules read
+  every run from the candles alone, using only bars up to each read's date, so
+  it is a consistent cross-check on what the agents concluded, not their view.
 
 The **Data coverage** card beside the report lists what each kind of data
 returned during the run: served, partly served, none found, withheld for a past

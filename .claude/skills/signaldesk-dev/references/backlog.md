@@ -1,4 +1,4 @@
-# Known issues, open questions and next improvements (as of 2026-11-03)
+# Known issues, open questions and next improvements (as of 2026-11-09)
 
 Verify an item still applies before acting on it; strike it here when fixed.
 
@@ -62,6 +62,22 @@ Verify an item still applies before acting on it; strike it here when fixed.
     10-Q is filed (~2 weeks after the 8-K press release), and 10-K years have no
     Q4 column (Q4 = FY − 9M is not derived). Between release and filing only the
     news headlines carry the new quarter.
+
+18. **IBKR is holdings only.** The Flex Web Service gives statements (positions,
+    cash), not market data; prices still come from Yahoo. IBKR quotes and bars
+    would need TWS or IB Gateway running with the API on (`ib_async`), which this
+    Mac did not have on 2026-11-09. The Flex sync is tested against IBKR's
+    documented XML only: confirm it on the user's real query (it must include
+    Open Positions; Cash Report and Account Information are optional).
+19. **Research sites.** StockAnalysis is a fallback vendor only (its terms admit
+    robots.txt-following crawlers; robots.txt allows /stocks/ and /quote/). Its
+    markup can change: `page_tables` reads h1–h3 + table rows, so a redesign
+    shows up as NoMarketDataError, not wrong numbers. Seeking Alpha (Alpha
+    Picks) is not read: its terms forbid automated access. A paid API (FMP,
+    Finnhub) could add point-in-time estimates for past runs.
+20. **The stance rules are a cross-check, not a model.** `price_structure._plan`
+    is deterministic and explainable; it has not been backtested. A backtest
+    metric "did the stance's buy zone/target get hit first" would calibrate it.
 
 ## Ranked ideas
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from ...adapters.tradingagents_adapter import portfolio_context
-from ..schemas import PortfolioOut, PortfolioPreview, PortfolioQuote, PortfolioWrite
+from ..schemas import IbkrBookOut, PortfolioOut, PortfolioPreview, PortfolioQuote, PortfolioWrite
+from ..services.ibkr_flex import IbkrFlexError, import_book
 from ..services.portfolio import clear_book, load_book, quotes, save_book, used_by_default
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
@@ -33,6 +34,15 @@ def put_portfolio(payload: PortfolioWrite) -> dict:
 def delete_portfolio() -> Response:
     clear_book()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/ibkr", response_model=IbkrBookOut)
+def import_from_ibkr() -> dict:
+    """The positions and cash in the configured IBKR Flex Query; nothing is saved."""
+    try:
+        return import_book()
+    except IbkrFlexError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/preview", response_model=PortfolioPreview)

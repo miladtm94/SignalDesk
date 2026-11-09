@@ -116,6 +116,51 @@ class PolymarketResilienceTests(unittest.TestCase):
         self.assertIn("Fed rate cut", out)
 
 
+# What urllib3 raises when a network answers for the host with its own site, as
+# Australian ISPs do for Polymarket (the certificate is block.acma.gov.au's).
+_BLOCKED = requests.exceptions.SSLError(
+    "HTTPSConnectionPool(host='gamma-api.polymarket.com', port=443): Max retries exceeded "
+    "(Caused by SSLError(SSLCertVerificationError(1, \"[SSL: CERTIFICATE_VERIFY_FAILED] "
+    "certificate verify failed: Hostname mismatch, certificate is not valid for "
+    "'gamma-api.polymarket.com'. (_ssl.c:1032)\")))"
+)
+
+
+@pytest.mark.unit
+class PolymarketUnreachableTests(unittest.TestCase):
+    def setUp(self):
+        polymarket._unreachable = None
+
+    tearDown = setUp
+
+    def test_a_blocked_host_is_asked_once_then_skipped(self):
+        with mock.patch.object(polymarket, "_request", side_effect=_BLOCKED) as req:
+            first = polymarket.get_prediction_markets("copper")
+            second = polymarket.get_prediction_markets("Fed rate cut")
+        req.assert_called_once()
+        for out, topic in ((first, "copper"), (second, "Fed rate cut")):
+            # Read as unavailable by the run's data coverage, not as served data.
+            self.assertTrue(out.startswith("DATA_UNAVAILABLE"))
+            self.assertIn("another site's certificate", out)
+            self.assertIn(topic, out)
+
+    def test_the_host_is_asked_again_after_the_pause(self):
+        with mock.patch.object(polymarket, "_request", side_effect=_BLOCKED):
+            polymarket.get_prediction_markets("copper")
+        polymarket._unreachable = (0.0, "expired")
+        with mock.patch.object(polymarket, "_request", return_value={"events": []}) as req:
+            out = polymarket.get_prediction_markets("copper")
+        req.assert_called_once()
+        self.assertIn("No open prediction markets", out)
+
+    def test_a_timeout_does_not_pause_the_vendor(self):
+        with mock.patch.object(polymarket, "_request",
+                               side_effect=requests.exceptions.ConnectTimeout("slow")) as req:
+            polymarket.get_prediction_markets("copper")
+            polymarket.get_prediction_markets("copper")
+        self.assertEqual(req.call_count, 2)
+
+
 @pytest.mark.unit
 class PolymarketRoutingTests(unittest.TestCase):
     def setUp(self):

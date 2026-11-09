@@ -147,7 +147,7 @@ def test_chart_endpoint_returns_candles_and_analysis_levels(monkeypatch):
     monkeypatch.setattr(
         runs_api,
         "load_current_market_chart",
-        lambda ticker, since=None: asked.update(since=since) or MarketChartData(
+        lambda ticker, since=None, warmup=0: asked.update(since=since, warmup=warmup) or MarketChartData(
             symbol=ticker,
             as_of="2026-08-27",
             candles=[
@@ -189,7 +189,7 @@ def test_chart_endpoint_returns_candles_and_analysis_levels(monkeypatch):
 
     body = response.json()
     assert response.status_code == 200
-    assert asked["since"] == date(2026, 8, 25)
+    assert asked["since"] == date(2026, 8, 25) and asked["warmup"] > 200
     assert body["current_price"] == 233.0
     assert body["direction"] == "long" and body["analysis_date"] == "2026-08-25"
     # 230 is above the 224 close the analysis saw, so it cannot be a long's stop.

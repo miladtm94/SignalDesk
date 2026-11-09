@@ -19,7 +19,12 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from ...adapters.tradingagents_adapter import load_current_market_chart, portfolio_context
+from ...adapters.tradingagents_adapter import (
+    book_position,
+    load_current_market_chart,
+    load_price_structure,
+    portfolio_context,
+)
 from ..database import SessionLocal
 from ..models import Decision, Run, RunEvent, RunNote, Usage
 from ..schemas import (
@@ -32,11 +37,20 @@ from ..schemas import (
     RunPatch,
     RunSummary,
 )
-from ..services.charts import analysis_outcome, decision_direction, plan_levels, strategy_levels
+from ..services.charts import (
+    analysis_outcome,
+    decision_direction,
+    decision_stance,
+    plan_levels,
+    plan_tranches,
+    position_plan,
+    strategy_levels,
+)
 from ..services.costs import estimate_run_cost
 from ..services.orchestrator import TERMINAL_STATUSES, orchestrator
 from ..services.portfolio import load_book
 from ..services.providers import get_provider_configuration
+from ..services.technicals import WARMUP, chart_technicals
 from ..settings import DAILY_SPEND_CAP_USD
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -223,8 +237,11 @@ def get_run_chart(run_id: str) -> dict:
         ticker, trade_date = run.ticker, run.trade_date
         levels = strategy_levels(run.decision, run.sections)
         direction = decision_direction(run.decision, run.sections)
+        stance = decision_stance(run.sections)
+        tranches, plan_source = plan_tranches(run.sections)
+        book = book_position(run.portfolio_snapshot, ticker)
     try:
-        market = load_current_market_chart(ticker, since=trade_date)
+        market = load_current_market_chart(ticker, since=trade_date, warmup=WARMUP)
     except Exception as exc:
         logger.warning("Current chart unavailable for run %s: %s", run_id, exc)
         raise HTTPException(
@@ -235,6 +252,18 @@ def get_run_chart(run_id: str) -> dict:
     day = trade_date.isoformat()
     seen = [candle["close"] for candle in market.candles if str(candle["time"]) <= day]
     drawn, notes = plan_levels(levels, direction, seen[-1] if seen else None)
+    try:
+        technicals = chart_technicals(market.history, market.candles, trade_date)
+    except Exception:
+        # The indicators add to the chart; a bad bar must not take the candles with it.
+        logger.exception("Technical read failed for run %s", run_id)
+        technicals = None
+    try:
+        structure = load_price_structure(ticker, trade_date)
+    except Exception:
+        # The weekly and monthly views add to the daily chart; they must not take it down.
+        logger.exception("Price structure failed for run %s", run_id)
+        structure = None
     return {
         "symbol": market.symbol,
         "as_of": market.as_of,
@@ -245,6 +274,10 @@ def get_run_chart(run_id: str) -> dict:
         "direction": direction,
         "notes": notes,
         "outcome": analysis_outcome(market.candles, trade_date, drawn),
+        "technicals": technicals,
+        "structure": structure,
+        "action_now": stance,
+        "plan": position_plan(tranches, plan_source, drawn, direction, market.candles, trade_date, book),
     }
 
 

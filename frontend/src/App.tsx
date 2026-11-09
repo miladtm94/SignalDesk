@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CandlestickSeries, ColorType, createChart, createSeriesMarkers, LineStyle } from "lightweight-charts";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertCircle, ArrowLeft, ArrowRight, BarChart3, BookOpen, Bot,
   Check, CheckCircle2, ChevronDown, ChartLine, CircleDollarSign, CircleStop, Download, FileText,
   FlaskConical, History, KeyRound, Menu, MessageSquarePlus, Play, RefreshCw,
   Search, Settings, ShieldCheck, Sparkles, Star, Terminal, Trash2, Wallet, X,
 } from "lucide-react";
-import { AnalysisOutcome, api, DataOutcome, Preferences, ProviderResponse, RunChart, RunDetail, RunPayload, RunSection, RunSummary, SecretMask, Subscription, streamUrl, Usage } from "./api";
+import { api, DataOutcome, Preferences, ProviderResponse, RunDetail, RunPayload, RunSection, RunSummary, SecretMask, Subscription, streamUrl, Usage } from "./api";
 import { BacktestsView, BacktestView, NewBacktest } from "./Backtests";
 import { BookCard, HoldingsView, PortfolioPicker } from "./Holdings";
 import { Report } from "./Report";
+import { StrategyChart } from "./StrategyChart";
 import { estimateRunCost, loadModelDefaults, ModelSetup, Prices } from "./ModelSetup";
 import {
-  analystOptions, EmptyState, formatClock, formatDate, formatShortDate, formatSignedPercent, formatTimestamp, FormHeading, isPlanBilled, LanguageField, LoadingRows, localISODate, parseTimestamp,
+  analystOptions, EmptyState, formatClock, formatDate, formatTimestamp, FormHeading, isPlanBilled, LanguageField, LoadingRows, localISODate, parseTimestamp,
   Metric, OfflineNotice, PageHeader, providerName, ratingTone, reasoningValue, selectableModels, sharedReasoningLevels, Status, Stepper, withReasoning,
 } from "./shared";
 
@@ -156,20 +156,15 @@ function LiveRun({ runId, onBack, onOpenBacktest }: { runId: string; onBack: () 
     <div className="report-layout"><section className="report-flow">{ordered.length ? <><div className="section-tabs" role="tablist" aria-label="Research report sections">{ordered.map((section, index) => { const meta = sectionMeta[section.section_key] ?? { label: section.section_key, group: "Research", tone: "teal", icon: "📄" }; const selected = section.section_key === activeSection?.section_key; return <button key={section.section_key} className={`section-tab ${selected ? "active" : ""}`} role="tab" aria-selected={selected} onClick={() => setActiveSectionKey(section.section_key)}><span>{String(index + 1).padStart(2, "0")} · {meta.group}</span><strong><span className="section-icon" aria-hidden="true">{meta.icon}</span>{meta.label}</strong></button>; })}</div>{activeSection && <ReportSection section={activeSection} index={ordered.indexOf(activeSection)} />}</> : <div className="waiting-card"><RefreshCw className="spin" /><strong>The analyst desk is gathering evidence</strong><span>Sections will appear here as each agent completes.</span></div>}{run.status === "running" && ordered.length > 0 && <div className="next-section"><span className="pulse-dot" /><span>Waiting for the next completed agent step…</span></div>}</section><aside className="run-aside"><div className="record-card"><span className="eyebrow">REPRODUCIBILITY RECORD</span><dl><div><dt>Provider</dt><dd>{providerName(run.llm_provider)}</dd></div><div><dt>Deep model</dt><dd>{run.deep_think_llm}</dd></div><div><dt>Quick model</dt><dd>{run.quick_think_llm}</dd></div><div><dt>Reasoning / thinking</dt><dd>{reasoningSetting ? String(reasoningSetting) : "Provider default"}</dd></div><div><dt>Temperature</dt><dd>{run.temperature ?? "Default"}</dd></div><div><dt>Debate rounds</dt><dd>{run.max_debate_rounds} + {run.max_risk_discuss_rounds} risk</dd></div><div><dt>Checkpoint</dt><dd>{run.checkpoint_enabled ? "Enabled" : "Disabled"}</dd></div><div><dt>Portfolio</dt><dd>{run.used_portfolio ? "Decided against your book" : "No portfolio context"}</dd></div><div><dt>Started</dt><dd>{run.started_at ? formatTimestamp(run.started_at) : "Queued"}</dd></div></dl></div>{run.usage?.data_coverage && <DataCoverageCard coverage={run.usage.data_coverage} />}{run.used_portfolio && <BookCard context={run.portfolio_context} />}<div className="notes-card"><div className="card-heading"><div><MessageSquarePlus size={16} /><strong>Notebook</strong></div><span>{run.notes.length}</span></div><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="What do you want to remember about this call?" /><input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" /><button onClick={saveNote}>Save note</button>{run.notes.map((item) => <article key={item.id}><p>{item.note_text}</p><div>{item.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div><small>{formatTimestamp(item.created_at)}</small></article>)}</div></aside></div></>;
 }
 
-const levelPresentation = {
-  entry: { label: "Entry", color: "#2d8b68" },
-  take_profit: { label: "Take profit", color: "#3b72c4" },
-  stop_loss: { label: "Stop loss", color: "#c4574e" },
-} as const;
-const directionNames = { long: "Long setup", hold: "Hold", reduce: "Reduce / sell setup" } as const;
-
 // The data tools grouped as a reader thinks of them, in report order.
 const coverageGroups: [string, string[]][] = [
   ["Prices & technicals", ["get_stock_data", "get_indicators", "get_verified_market_snapshot"]],
+  ["Weekly & monthly structure", ["get_price_structure"]],
   ["Company news", ["get_news"]],
   ["Market news", ["get_global_news"]],
   ["Financial statements", ["get_income_statement", "get_balance_sheet", "get_cashflow"]],
   ["Company profile", ["get_fundamentals"]],
+  ["Analyst coverage", ["get_analyst_coverage"]],
   ["Insider trades", ["get_insider_transactions"]],
   ["Macro data", ["get_macro_indicators"]],
   ["Prediction markets", ["get_prediction_markets"]],
@@ -191,47 +186,6 @@ function DataCoverageCard({ coverage }: { coverage: NonNullable<Usage["data_cove
   if (!rows.length) return null;
   const missing = rows.filter((row) => row.verdict[0] === "missing" || row.verdict[0] === "partial");
   return <div className="record-card coverage-card"><span className="eyebrow">DATA COVERAGE</span>{missing.length > 0 && <p className="coverage-warning"><AlertCircle size={13} /> Decided without full {missing.map((row) => row.label.toLowerCase()).join(", ")}. Weigh the call accordingly.</p>}<dl>{rows.map((row) => <div key={row.label}><dt>{row.label}</dt><dd className={`coverage-${row.verdict[0]}`}>{row.verdict[1]} <small>· {row.calls} call{row.calls === 1 ? "" : "s"}</small></dd></div>)}</dl><small className="coverage-foot">The sentiment analyst reads news, StockTwits and Reddit itself; its report says what it found.</small></div>;
-}
-const price = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: value < 1 ? 6 : 2 });
-
-// What the price did after the analysis date, against the close the analysis saw.
-function OutcomeStrip({ outcome }: { outcome: AnalysisOutcome }) {
-  const move = (value: number) => formatSignedPercent(value / outcome.close - 1);
-  if (!outcome.sessions) return <div className="outcome-strip"><span>Analysed on the latest close ({price(outcome.close)} on {formatDate(outcome.date)}). The outcome appears here as new sessions trade.</span></div>;
-  return <div className="outcome-strip"><span>Since the analysis · close {price(outcome.close)} on {formatDate(outcome.date)}</span><strong className={outcome.change_pct >= 0 ? "up" : "down"}>Now {price(outcome.latest_close)} ({formatSignedPercent(outcome.change_pct / 100)}) after {outcome.sessions} sessions</strong>{outcome.high !== null && <span>High {price(outcome.high)} on {formatShortDate(outcome.high_date!)} ({move(outcome.high)})</span>}{outcome.low !== null && <span>Low {price(outcome.low)} on {formatShortDate(outcome.low_date!)} ({move(outcome.low)})</span>}{outcome.touches.map((touch) => <span key={touch.kind} className={touch.date ? "reached" : ""}>{touch.label ?? levelPresentation[touch.kind].label} {price(touch.price)}: {touch.date ? `reached ${formatShortDate(touch.date)}` : "not reached"}</span>)}</div>;
-}
-
-function StrategyChart({ runId, revision }: { runId: string; revision: string }) {
-  const container = useRef<HTMLDivElement | null>(null);
-  const [data, setData] = useState<RunChart | null>(null), [error, setError] = useState(""), [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    api.chart(runId).then((result) => { if (!cancelled) { setData(result); setError(""); } }).catch((reason) => { if (!cancelled) { setData(null); setError(reason instanceof Error ? reason.message : "Chart unavailable"); } }).finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [runId, revision]);
-  useEffect(() => {
-    if (!container.current || !data?.candles.length) return;
-    const element = container.current;
-    const chart = createChart(element, {
-      width: element.clientWidth,
-      height: 370,
-      layout: { background: { type: ColorType.Solid, color: "#faf9f4" }, textColor: "#61706b" },
-      grid: { vertLines: { color: "#eef0ea" }, horzLines: { color: "#e6e9e2" } },
-      rightPriceScale: { borderColor: "#d8ddd5" },
-      timeScale: { borderColor: "#d8ddd5", timeVisible: false, rightOffset: 4 },
-      crosshair: { vertLine: { color: "#91a39c" }, horzLine: { color: "#91a39c" } },
-    });
-    const series = chart.addSeries(CandlestickSeries, { upColor: "#4e9871", downColor: "#c96b62", borderVisible: false, wickUpColor: "#4e9871", wickDownColor: "#c96b62" });
-    series.setData(data.candles);
-    if (data.outcome) createSeriesMarkers(series, [{ time: data.outcome.date, position: "aboveBar", shape: "arrowDown", color: "#173f35", text: "Analysis" }]);
-    data.levels.forEach((level) => { const presentation = levelPresentation[level.kind]; series.createPriceLine({ price: level.price, color: presentation.color, lineWidth: 2, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: level.label ?? presentation.label }); });
-    chart.timeScale().fitContent();
-    const resize = new ResizeObserver(() => chart.applyOptions({ width: element.clientWidth }));
-    resize.observe(element);
-    return () => { resize.disconnect(); chart.remove(); };
-  }, [data]);
-  return <section className="strategy-chart-card"><div className="strategy-chart-heading"><div><span className="eyebrow">STRATEGY VISUAL</span><h2>Price since the analysis & decision levels</h2><p>{data ? `${data.symbol} · Daily candles through ${formatDate(data.as_of)} · Last close ${price(data.current_price)}` : "Current daily candles with levels stated in the saved analysis."}</p></div><div className="chart-badges">{data?.direction && <span className={`direction-chip direction-${data.direction}`}>{directionNames[data.direction]}</span>}<span className="chart-source">TradingView Lightweight Charts · Yahoo Finance data</span></div></div>{loading ? <div className="chart-state"><RefreshCw className="spin" /> Loading current candles…</div> : error ? <div className="chart-state chart-error"><AlertCircle size={17} /> {error}</div> : <><div ref={container} className="strategy-chart" />{data && <div className="strategy-legend">{data.levels.map((level) => <div key={level.kind}><i style={{ background: levelPresentation[level.kind].color }} /><span>{level.label ?? levelPresentation[level.kind].label}</span><strong>{price(level.price)}</strong><small>{level.source}</small></div>)}{!data.levels.length && <p>No entry, target or stop price that fits this decision was stated in the analysis.</p>}</div>}{data?.outcome && <OutcomeStrip outcome={data.outcome} />}{data && data.notes.length > 0 && <ul className="chart-notes">{data.notes.map((note) => <li key={note}>{note}</li>)}</ul>}</>}</section>;
 }
 function mergeSection(sections: RunSection[], payload: Record<string, unknown>) { const section_key = String(payload.section_key), next: RunSection = { section_key, content_md: String(payload.content_md ?? ""), structured_json: (payload.structured_json as Record<string, unknown> | null) ?? null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; return sections.some((item) => item.section_key === section_key) ? sections.map((item) => item.section_key === section_key ? next : item) : [...sections, next]; }
 function ReportSection({ section, index }: { section: RunSection; index: number }) { const meta = sectionMeta[section.section_key] ?? { label: section.section_key, group: "Research", tone: "teal", icon: "📄" }; return <article className={`report-section tone-${meta.tone}`}><div className="report-index">{String(index + 1).padStart(2, "0")}</div><div className="report-body"><div className="report-heading"><div><span>{meta.group}</span><h2><span className="section-icon" aria-hidden="true">{meta.icon}</span>{meta.label}</h2></div><CheckCircle2 size={18} /></div><Report markdown={section.content_md} /></div></article>; }

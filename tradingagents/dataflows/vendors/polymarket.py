@@ -12,6 +12,8 @@ outcomes (a "Yes" at 0.76 means the market prices a 76% chance).
 import json
 import logging
 import math
+import threading
+import time
 from datetime import UTC, datetime
 
 import requests
@@ -28,6 +30,14 @@ REQUEST_TIMEOUT = 30
 # Default number of markets to return, ranked by traded volume.
 DEFAULT_LIMIT = 6
 
+# A network that intercepts the host (a regional block such as Australia's, a
+# captive portal, a filtering proxy) fails every request the same way, and the
+# news analyst asks several topics per run. After one such failure the vendor
+# answers at once for this long instead of failing, and logging, every topic.
+UNREACHABLE_SECONDS = 15 * 60
+_unreachable: tuple[float, str] | None = None  # (monotonic deadline, reason)
+_unreachable_lock = threading.Lock()
+
 
 def _request(path: str, params: dict) -> dict:
     response = requests.get(
@@ -35,6 +45,46 @@ def _request(path: str, params: dict) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+def _unreachable_reason(error: requests.RequestException) -> str | None:
+    """Why the host cannot be reached from here, or None for a passing failure.
+
+    A certificate issued for another host means the network answered in
+    Polymarket's place; a refused connection or failed TLS handshake will not
+    clear within a run either. Timeouts and HTTP errors may, so they are retried.
+    """
+    text = str(error).lower()
+    if isinstance(error, requests.exceptions.SSLError):
+        if "hostname mismatch" in text or "not valid for" in text or "doesn't match" in text:
+            return ("the network answers for gamma-api.polymarket.com with another site's "
+                    "certificate, as a regional block or filtering proxy does")
+        return "the secure connection to gamma-api.polymarket.com failed"
+    if isinstance(error, requests.exceptions.ConnectionError) and not isinstance(
+        error, requests.exceptions.Timeout
+    ):
+        return "gamma-api.polymarket.com could not be reached"
+    return None
+
+
+def _known_unreachable() -> str | None:
+    with _unreachable_lock:
+        if _unreachable and time.monotonic() < _unreachable[0]:
+            return _unreachable[1]
+    return None
+
+
+def _mark_unreachable(reason: str) -> None:
+    global _unreachable
+    with _unreachable_lock:
+        _unreachable = (time.monotonic() + UNREACHABLE_SECONDS, reason)
+
+
+def _unavailable(topic: str, reason: str) -> str:
+    return (
+        f"DATA_UNAVAILABLE: Polymarket prediction markets are unavailable ({reason}). "
+        f"Proceed without prediction-market signal for '{topic}'; do not estimate odds."
+    )
 
 
 def _parse_json_list(value) -> list:
@@ -108,14 +158,20 @@ def get_prediction_markets(topic: str, limit: int | None = None, as_of_date: str
     if limit is None:
         limit = DEFAULT_LIMIT
 
+    known = _known_unreachable()
+    if known:
+        return _unavailable(topic, known)
     try:
         data = _request("public-search", {"q": topic, "limit_per_type": 20})
     except requests.RequestException as e:
-        logger.warning("Polymarket search failed for %r: %s", topic, e)
-        return (
-            f"Polymarket data is currently unavailable (network error: {e}). "
-            f"Proceed without prediction-market signal for '{topic}'."
-        )
+        reason = _unreachable_reason(e)
+        if reason is None:
+            logger.warning("Polymarket search failed for %r: %s", topic, e)
+            return _unavailable(topic, f"network error: {e}")
+        _mark_unreachable(reason)
+        logger.warning("Polymarket is unreachable from this network (%s); prediction-market "
+                       "odds are skipped for the next %d minutes.", reason, UNREACHABLE_SECONDS // 60)
+        return _unavailable(topic, reason)
 
     now = datetime.now(UTC)
     candidates = [

@@ -164,6 +164,24 @@ def decision_direction(decision: Decision | None, sections: Iterable[RunSection]
     return None
 
 
+# The Portfolio Manager's "what to do at today's price", in the order the
+# structured decision lists them.
+STANCES = ("Buy now", "Wait for pullback", "Wait for breakout", "Hold", "Take profit", "Exit", "Avoid")
+_ACTION_NOW = re.compile(r"^[\s>*_#-]*action now[\s*_]*[:=-]\s*(.+)$", re.I | re.M)
+
+
+def decision_stance(sections: Iterable[RunSection]) -> str | None:
+    """The final decision's Action Now line, for display; nothing read here is stored."""
+    for section in sections:
+        if section.section_key != "portfolio_manager":
+            continue
+        found = _ACTION_NOW.search((section.content_md or "").replace("**", "").replace("__", ""))
+        if found:
+            value = found.group(1).strip().lower().replace(" a ", " ")
+            return next((stance for stance in STANCES if value.startswith(stance.lower())), None)
+    return None
+
+
 def _price(value: float) -> str:
     return f"{value:,.2f}" if value >= 1 else f"{value:.6g}"
 
@@ -260,3 +278,202 @@ def analysis_outcome(
         outcome["touches"].append({"kind": level["kind"], "label": level.get("label"), "price": price,
                                    "date": str(hit["time"]) if hit else None})
     return outcome
+
+
+# --- the scaled position plan ------------------------------------------------------
+
+_SIDES = {
+    "buy": ("buy", "add", "accumulate", "enter", "long"),
+    "sell": ("sell", "trim", "take profit", "take-profit", "exit", "reduce", "cover"),
+}
+_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+
+def _column(names: list[str], *prefixes: str) -> int | None:
+    return next((i for i, name in enumerate(names) if name.startswith(prefixes)), None)
+
+
+def _tranche_rows(markdown: str) -> list[dict[str, Any]]:
+    """The first table with Side, Price and Size columns, one tranche per readable row."""
+    plain = markdown.replace("**", "").replace("__", "").replace("`", "")
+    columns: dict[str, int | None] | None = None
+    rows: list[dict[str, Any]] = []
+    for raw_line in plain.splitlines():
+        line = raw_line.strip()
+        if "|" not in line:
+            if rows:
+                break
+            columns = None
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        names = [cell.lower() for cell in cells]
+        if columns is None:
+            found = {"side": _column(names, "side"), "price": _column(names, "price"),
+                     "size": _column(names, "size", "allocation"),
+                     "trigger": _column(names, "trigger", "rationale", "condition", "why", "level")}
+            if None not in (found["side"], found["price"], found["size"]):
+                columns = found
+            continue
+        wanted = max(index for index in columns.values() if index is not None)
+        if all(set(cell) <= set("-: ") for cell in cells) or len(cells) <= wanted:
+            continue
+        side = next((key for key, words in _SIDES.items() if names[columns["side"]].startswith(words)), None)
+        price = _number(cells[columns["price"]])
+        size = _PERCENT.search(cells[columns["size"]])
+        if side is None or price is None or size is None or not 0 < float(size.group(1)) <= 100:
+            continue
+        trigger = cells[columns["trigger"]] if columns["trigger"] is not None else ""
+        rows.append({"side": side, "price": price, "size_pct": float(size.group(1)), "trigger": trigger})
+    return rows
+
+
+def plan_tranches(sections: Iterable[RunSection]) -> tuple[list[dict[str, Any]], str | None]:
+    """The scaled plan the run states: the final decision's tranches, else the trader's.
+
+    Read from the rendered table for display only; nothing parsed here is stored.
+    """
+    content = {section.section_key: section.content_md or "" for section in sections}
+    for key in ("portfolio_manager", "trader"):
+        rows = _tranche_rows(content.get(key, ""))
+        if rows:
+            return rows, SOURCE_LABELS[key]
+    return [], None
+
+
+def _touched(candle: dict[str, Any], price: float, reference: float) -> bool:
+    """Whether a bar traded through a price, approached from the analysis close's side."""
+    return candle["high"] >= price if price >= reference else candle["low"] <= price
+
+
+def _replay(tranches: list[dict[str, Any]], stop: float | None, after: list[dict[str, Any]],
+            reference: float, held: float) -> dict[str, Any]:
+    """The plan traded on the bars since the analysis, in notional units.
+
+    Tranches fill at their price once a bar trades through it. A Sell takes its
+    share of the largest position held so far, so a Buy that never filled shrinks
+    every Sell in proportion and the runner is kept. A protective stop
+    exits everything held at the stop, or at the open on a gap through it, and
+    ends the plan; a bar that touched both a tranche and the stop is read as the
+    stop coming last, which is the cautious reading of an unknown order.
+    """
+    units, spent, proceeds, peak = held, 0.0, 0.0, held
+    filled: dict[int, str] = {}
+    stopped = None
+    for candle in after:
+        for number, tranche in enumerate(tranches, 1):
+            if number in filled or not _touched(candle, tranche["price"], reference):
+                continue
+            if tranche["side"] == "buy":
+                bought = tranche["size_pct"] / tranche["price"]
+                units, spent = units + bought, spent + tranche["size_pct"]
+                peak = max(peak, units)
+            else:
+                sold = min(units, tranche["size_pct"] / 100 * peak)
+                if sold <= 0:
+                    continue  # nothing held yet: the Sell waits for a Buy to fill
+                units, proceeds = units - sold, proceeds + sold * tranche["price"]
+            filled[number] = str(candle["time"])
+        if stop is not None and units > 0 and candle["low"] <= stop:
+            exit_price = min(float(candle["open"]), stop)
+            proceeds, units = proceeds + units * exit_price, 0.0
+            stopped = {"date": str(candle["time"]), "price": exit_price}
+            break
+    latest = float(after[-1]["close"])
+    result = proceeds + units * latest - spent - held * reference
+    return {"filled": [{"number": number, "date": day} for number, day in filled.items()],
+            "stopped": stopped, "result_pct": result, "latest_close": latest,
+            "sessions": len(after), "open_pct": units * latest}
+
+
+def position_plan(
+    tranches: list[dict[str, Any]],
+    source: str | None,
+    levels: list[dict[str, Any]],
+    direction: str | None,
+    candles: list[dict[str, Any]],
+    trade_date: date,
+    book: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """The tranches checked against the price the analysis saw, with what they add up to.
+
+    Figures are percentages: a plan that buys is measured per 100 of available
+    cash, one that only sells per 100 of the position's value at the analysis
+    close. Amounts come from the run's book only where they cannot mix
+    currencies: the cash a Buy commits, and the units a Sell takes off a held
+    position.
+    """
+    if not tranches:
+        return None
+    day = trade_date.isoformat()
+    upto = [i for i, candle in enumerate(candles) if str(candle["time"]) <= day]
+    reference = float(candles[upto[-1]]["close"]) if upto else float(candles[0]["close"])
+    after = candles[upto[-1] + 1:] if upto else []
+    notes: list[str] = []
+    kept: list[dict[str, Any]] = []
+    low, high = _PLAUSIBLE
+    for tranche in tranches:
+        if not low * reference <= tranche["price"] <= high * reference:
+            notes.append(f"A {tranche['side']} at {_price(tranche['price'])} is too far from the "
+                         f"{_price(reference)} close to be a level, so it is left out.")
+            continue
+        kept.append(tranche)
+    if not kept:
+        return {"source": source, "reference": reference, "tranches": [], "summary": None,
+                "replay": None, "notes": notes}
+
+    stop = next((level["price"] for level in levels if level["kind"] == "stop_loss"), None)
+    # A stop below the price protects a holding; above it, on a reduce, it only
+    # marks where the case for selling is reassessed, and nothing trades there.
+    protective = stop if stop is not None and stop < reference and direction != "reduce" else None
+    buys = [t for t in kept if t["side"] == "buy"]
+    sells = [t for t in kept if t["side"] == "sell"]
+    committed = sum(t["size_pct"] for t in buys)
+    sold = sum(t["size_pct"] for t in sells)
+    # Notional: 100 of cash for a plan that buys, else a position worth 100 at the close.
+    held = 0.0 if buys else 100 / reference
+    bought = sum(t["size_pct"] / t["price"] for t in buys)
+    full = held + bought
+    average = committed / bought if bought else None
+    cost = held * reference + committed
+    basis = cost / full if full else None
+
+    cash = (book or {}).get("cash")
+    held_units = (book or {}).get("units") or 0.0
+    rows = []
+    for number, tranche in enumerate(kept, 1):
+        reached = next((str(c["time"]) for c in after if _touched(c, tranche["price"], reference)), None)
+        row = {**tranche, "number": number, "distance_pct": (tranche["price"] / reference - 1) * 100,
+               "reached": reached, "amount": None, "units": None}
+        if tranche["side"] == "buy" and cash is not None:
+            row["amount"] = cash * tranche["size_pct"] / 100
+        if tranche["side"] == "sell" and not buys and held_units > 0:
+            row["units"] = held_units * tranche["size_pct"] / 100
+        rows.append(row)
+        if protective is not None and tranche["side"] == "buy" and tranche["price"] <= protective:
+            notes.append(f"Buy {number} at {_price(tranche['price'])} is at or below the "
+                         f"{_price(protective)} stop: it fills only after the stop has exited.")
+        if average is not None and tranche["side"] == "sell" and tranche["price"] < average:
+            notes.append(f"Sell {number} at {_price(tranche['price'])} is below the "
+                         f"{_price(average)} average entry, so it would lock in a loss.")
+    if committed > 100:
+        notes.append(f"The Buys add up to {committed:g}% of available cash, more than there is.")
+    if sold > 100:
+        notes.append(f"The Sells add up to {sold:g}% of the position, more than it holds.")
+
+    risk = full * (basis - protective) if protective is not None and basis and basis > protective else None
+    reward = sum(t["size_pct"] / 100 * full * (t["price"] - basis) for t in sells) if basis and sells else None
+    summary = {
+        "basis": "cash" if buys else "position", "committed_pct": committed, "sold_pct": sold,
+        "remaining_pct": max(0.0, 100 - sold) if sells else None, "average_entry": average,
+        "stop": stop, "protective_stop": protective is not None,
+        "risk_pct": risk, "reward_pct": reward,
+        "reward_risk": reward / risk if risk and reward and reward > 0 else None,
+        "cash": cash, "currency": (book or {}).get("currency"), "held_units": held_units or None,
+    }
+    replay = _replay(kept, protective, after, reference, held) if after else None
+    if replay is not None:
+        # What putting the whole allocation on at the analysis close, and keeping
+        # it, would have made over the same sessions: the plan's comparison.
+        replay["all_at_close_pct"] = (committed if buys else 100) * (replay["latest_close"] / reference - 1)
+    return {"source": source, "reference": reference, "tranches": rows, "summary": summary,
+            "replay": replay, "notes": notes}

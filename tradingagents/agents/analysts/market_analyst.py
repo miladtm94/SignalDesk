@@ -2,6 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts.turn import take_turn
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
+from tradingagents.agents.signaldesk_tools import get_price_structure
 from tradingagents.agents.tools import get_indicators, get_stock_data, get_verified_market_snapshot
 
 # The tools this analyst is offered; its tool node is built from the same tuple.
@@ -9,6 +10,7 @@ TOOLS = (
     get_stock_data,
     get_indicators,
     get_verified_market_snapshot,
+    get_price_structure,
 )
 
 
@@ -47,7 +49,11 @@ Volume-Based Indicators:
 
 Before writing the final report, call get_verified_market_snapshot for this ticker and the current date, and treat it as the source of truth for any exact OHLCV, price-level, or indicator-value claim. If another tool's output conflicts with the verified snapshot, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless they are directly supported by tool output with concrete dates and prices.
 
-Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."""
+Write a very detailed and nuanced report of the trends you observe. Provide specific, actionable insights with supporting evidence to help traders make informed decisions.
+
+The decision is for a swing trade or an investment held for weeks to months, so its levels come from weekly and monthly bars, not single sessions. Call get_price_structure for this ticker and the current date: it gives the weekly (swing) and monthly (investor) trend, the support and resistance zones from swing pivots, and a buy zone, take-profit zones, a trigger, an invalidation level and a stance for new money and for holders.
+
+Close the report with the price structure the trader scales entries and exits against: the trend regime on the daily, weekly and monthly bars (the close against the 10 EMA, 50 and 200 SMA, and the 10/40-week and 10/20-month SMAs), the pattern the swings are building (higher highs and higher lows, lower highs and lower lows, a range, a breakout, or a volatility squeeze), and a table of the key zones -- buy zone, take-profit zones, trigger and invalidation -- with their price ranges and what defines each. Say whether the price is in the buy zone now or a new position should wait for a pullback or a breakout, or avoid the stock; not every chart is a buy or a sell. Where your reading differs from the tool's rule-based stance, say why."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
             + get_language_instruction()
         )

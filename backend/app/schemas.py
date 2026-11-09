@@ -163,6 +163,195 @@ class ChartCandleOut(BaseModel):
     high: float
     low: float
     close: float
+    volume: float | None = None
+
+
+class ChartPointOut(BaseModel):
+    time: str
+    value: float
+
+
+class ChartCrossOut(BaseModel):
+    time: str
+    kind: Literal["golden", "death"]
+
+
+class PriceLevelOut(BaseModel):
+    """A support or resistance level clustered from swing pivots."""
+
+    price: float
+    touches: int
+    last_date: str
+
+
+class TechnicalSignalOut(BaseModel):
+    name: str
+    tone: Literal["bullish", "bearish", "neutral"]
+    text: str
+
+
+class TechnicalReadOut(BaseModel):
+    """A rule-based read of one bar from it and the bars before it."""
+
+    date: str
+    close: float
+    bias: Literal["bullish", "bearish", "neutral"]
+    score: int
+    signals: list[TechnicalSignalOut]
+    notes: list[str] = Field(default_factory=list)
+    supports: list[PriceLevelOut] = Field(default_factory=list)
+    resistances: list[PriceLevelOut] = Field(default_factory=list)
+    values: dict[str, float | None] = Field(default_factory=dict)
+
+
+class ChartTechnicalsOut(BaseModel):
+    series: dict[str, list[ChartPointOut]] = Field(default_factory=dict)
+    crosses: list[ChartCrossOut] = Field(default_factory=list)
+    analysis: TechnicalReadOut | None = None
+    latest: TechnicalReadOut | None = None
+
+
+class PlanTrancheOut(BaseModel):
+    number: int
+    side: Literal["buy", "sell"]
+    price: float
+    size_pct: float
+    trigger: str = ""
+    distance_pct: float
+    reached: str | None = None
+    # From the run's book: the cash a Buy commits, the units a Sell takes off.
+    amount: float | None = None
+    units: float | None = None
+
+
+class PlanSummaryOut(BaseModel):
+    """What the tranches add up to; percentages of available cash, or of the
+    position's value at the analysis close for a plan that only sells."""
+
+    basis: Literal["cash", "position"]
+    committed_pct: float
+    sold_pct: float
+    remaining_pct: float | None = None
+    average_entry: float | None = None
+    stop: float | None = None
+    protective_stop: bool = False
+    risk_pct: float | None = None
+    reward_pct: float | None = None
+    reward_risk: float | None = None
+    cash: float | None = None
+    currency: str | None = None
+    held_units: float | None = None
+
+
+class PlanFillOut(BaseModel):
+    number: int
+    date: str
+
+
+class PlanStopOut(BaseModel):
+    date: str
+    price: float
+
+
+class PlanReplayOut(BaseModel):
+    """The plan traded on the sessions since the analysis."""
+
+    filled: list[PlanFillOut] = Field(default_factory=list)
+    stopped: PlanStopOut | None = None
+    result_pct: float
+    all_at_close_pct: float
+    open_pct: float
+    latest_close: float
+    sessions: int
+
+
+class PositionPlanOut(BaseModel):
+    source: str | None = None
+    reference: float
+    tranches: list[PlanTrancheOut] = Field(default_factory=list)
+    summary: PlanSummaryOut | None = None
+    replay: PlanReplayOut | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+class StructureZoneOut(BaseModel):
+    """A support or resistance zone clustered from weekly and monthly swings."""
+
+    low: float
+    high: float
+    mid: float
+    kind: Literal["support", "resistance"]
+    touches: int
+    timeframes: list[str]
+    last_date: str
+    contains_price: bool
+    distance_pct: float
+
+
+class StructureRegionOut(BaseModel):
+    low: float
+    high: float
+    why: str
+
+
+class StructureLevelOut(BaseModel):
+    price: float
+    why: str
+
+
+class StructurePlanOut(BaseModel):
+    """Where to buy, take profit and give up, and what to do at the close."""
+
+    stance: Literal["buy_zone", "wait_pullback", "wait_breakout", "hold", "take_profit", "avoid"]
+    label: str
+    text: str
+    new_money: str
+    holders: str
+    buy_zone: StructureRegionOut | None = None
+    targets: list[StructureRegionOut] = Field(default_factory=list)
+    targets_projected: bool = False
+    invalidation: StructureLevelOut | None = None
+    trigger: StructureLevelOut | None = None
+
+
+class TimeframeReadOut(BaseModel):
+    lens: str
+    unit: str
+    bars: int
+    trend: Literal["up", "down", "range"]
+    trend_text: str
+    structure_text: str | None = None
+    sma_fast: float | None = None
+    sma_slow: float | None = None
+    rsi14: float | None = None
+    atr: float
+    averages: str
+    plan: StructurePlanOut
+
+
+class StructureReadOut(BaseModel):
+    as_of: str
+    close: float
+    zones: list[StructureZoneOut] = Field(default_factory=list)
+    timeframes: dict[str, TimeframeReadOut]
+    range: dict[str, float | str]
+
+
+class StructureFrameOut(BaseModel):
+    """One timeframe's bars and averages, for drawing."""
+
+    unit: str
+    fast: int
+    slow: int
+    candles: list[ChartCandleOut]
+    series: dict[str, list[ChartPointOut]] = Field(default_factory=dict)
+
+
+class PriceStructureOut(BaseModel):
+    frames: dict[str, StructureFrameOut] = Field(default_factory=dict)
+    analysis: StructureReadOut | None = None
+    latest: StructureReadOut | None = None
+    stances: dict[str, str] = Field(default_factory=dict)
 
 
 class StrategyLevelOut(BaseModel):
@@ -206,6 +395,11 @@ class RunChartOut(BaseModel):
     direction: Literal["long", "hold", "reduce"] | None = None
     notes: list[str] = Field(default_factory=list)
     outcome: AnalysisOutcomeOut | None = None
+    technicals: ChartTechnicalsOut | None = None
+    plan: PositionPlanOut | None = None
+    structure: PriceStructureOut | None = None
+    # The Portfolio Manager's "what to do at today's price", read for display.
+    action_now: str | None = None
 
 
 class RunPatch(BaseModel):
@@ -356,6 +550,17 @@ class PortfolioOut(BaseModel):
     positions: list[PositionIn] = Field(default_factory=list)
     use_by_default: bool = False
     updated_at: datetime | None = None
+
+
+class IbkrBookOut(BaseModel):
+    """A book read from an IBKR Flex statement, for review before it is saved."""
+
+    cash: float | None = None
+    currency: str | None = None
+    positions: list[PositionIn] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    account: str | None = None
+    as_of: str | None = None
 
 
 class PortfolioPreview(BaseModel):

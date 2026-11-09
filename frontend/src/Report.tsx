@@ -17,13 +17,13 @@ const PROPOSAL_LINE = /^[ \t]*FINAL TRANSACTION PROPOSAL:[ \t]*\**[ \t]*(BUY|SEL
 const FIELD_LINE = /^[ \t]*\*\*([A-Z][A-Za-z /&-]{1,40}?):?\*\*:?[ \t]*(.*)$/;
 
 // Short fields shown as tiles above the text, in the order the agent wrote them.
-const FACTS = new Set(["rating", "recommendation", "action", "entry price", "stop loss", "price target", "time horizon", "confidence"]);
+const FACTS = new Set(["rating", "action now", "recommendation", "action", "entry price", "stop loss", "price target", "time horizon", "confidence"]);
 const RATED = new Set(["rating", "recommendation", "action"]);
 
 const FIELD_EMOJI: Record<string, string> = {
   rating: "⭐", recommendation: "🧭", action: "⚡", "entry price": "🚪", "stop loss": "🛑", "price target": "🎯",
   "time horizon": "⏳", confidence: "📶", "executive summary": "📝", "investment thesis": "💡", rationale: "🧠",
-  reasoning: "🧠", "strategic actions": "🗺️", "position sizing": "⚖️", "key risks": "⚠️", risks: "⚠️",
+  reasoning: "🧠", "strategic actions": "🗺️", "position sizing": "⚖️", "position plan": "🪜", "action now": "⏱️", "key risks": "⚠️", risks: "⚠️",
   catalysts: "📰", "missing evidence": "❓", summary: "📝", outlook: "🔮",
 };
 

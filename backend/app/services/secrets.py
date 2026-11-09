@@ -23,6 +23,9 @@ EXTRA_SECRET_NAMES = {
     # A Claude plan token from `claude setup-token`, for a backend without a
     # signed-in Claude Code (a container). Only Claude Code ever reads it.
     "CLAUDE_CODE_OAUTH_TOKEN",
+    # Interactive Brokers' Flex Web Service, read-only: Holdings > Sync from IBKR.
+    "IBKR_FLEX_TOKEN",
+    "IBKR_FLEX_QUERY_ID",
 }
 
 

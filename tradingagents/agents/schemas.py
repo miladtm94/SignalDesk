@@ -21,7 +21,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 # LLMs sometimes write a placeholder string ("None", "N/A", ...) into an optional
 # numeric field instead of omitting it. Coerce those to None so the structured
@@ -85,6 +85,199 @@ class TraderAction(StrEnum):
     BUY = "Buy"
     HOLD = "Hold"
     SELL = "Sell"
+
+
+class ExecutionStance(StrEnum):
+    """What to do at today's price, apart from the rating's direction.
+
+    A rating says which way the evidence points; the stance says whether the
+    price is where to act on it. A Buy whose price is extended above its buy
+    zone is still a Wait for pullback, so the call and its timing stay apart.
+    """
+
+    BUY_NOW = "Buy now"
+    WAIT_FOR_PULLBACK = "Wait for pullback"
+    WAIT_FOR_BREAKOUT = "Wait for breakout"
+    HOLD = "Hold"
+    TAKE_PROFIT = "Take profit"
+    EXIT = "Exit"
+    AVOID = "Avoid"
+
+
+# How models write a stance in its own words, read onto the enum.
+_STANCE_WORDS = {
+    "buy": ExecutionStance.BUY_NOW, "buy now": ExecutionStance.BUY_NOW, "enter now": ExecutionStance.BUY_NOW,
+    "add now": ExecutionStance.BUY_NOW, "wait for a pullback": ExecutionStance.WAIT_FOR_PULLBACK,
+    "wait for pullback": ExecutionStance.WAIT_FOR_PULLBACK, "wait for a breakout": ExecutionStance.WAIT_FOR_BREAKOUT,
+    "wait for breakout": ExecutionStance.WAIT_FOR_BREAKOUT, "hold": ExecutionStance.HOLD,
+    "take profit": ExecutionStance.TAKE_PROFIT, "take profits": ExecutionStance.TAKE_PROFIT,
+    "trim": ExecutionStance.TAKE_PROFIT, "exit": ExecutionStance.EXIT, "sell": ExecutionStance.EXIT,
+    "avoid": ExecutionStance.AVOID,
+}
+
+
+def _read_stance(value):
+    """A stance in any case or common wording, else None: a stance nobody can
+    read must not fail the decision that carries the rating."""
+    if value is None or isinstance(value, ExecutionStance):
+        return value
+    text = " ".join(str(value).replace("-", " ").replace("_", " ").split()).strip(" .").lower()
+    return _STANCE_WORDS.get(text) or next((stance for stance in ExecutionStance if stance.value.lower() == text), None)
+
+
+STANCE_DESCRIPTION = (
+    "What to do at today's price, separate from the rating: Buy now when the price "
+    "is in the buy zone; Wait for pullback when the case is good but the price is "
+    "extended above the buy zone; Wait for breakout when entry needs a weekly close "
+    "above resistance; Hold to keep a position without adding; Take profit to trim "
+    "into resistance; Exit to sell the position; Avoid when there is no setup for "
+    "new money. A Buy or Overweight can still be Wait for pullback, and not every "
+    "chart is a buy or a sell. Read it from the weekly and monthly price structure "
+    "in the technical report."
+)
+
+
+class TrancheSide(StrEnum):
+    """Which way one step of a scaled plan trades."""
+
+    BUY = "Buy"
+    SELL = "Sell"
+
+
+class Tranche(BaseModel):
+    """One step of a scaled entry or exit: a price and how much trades there.
+
+    Scaling in and out spreads the timing risk of a single fill: part of the
+    size is committed where the setup is confirmed, more on a pullback to
+    support, and profit is taken in steps so a reversal cannot take it all back.
+    """
+
+    side: TrancheSide = Field(description="Buy adds units at this price; Sell takes units off.")
+    price: float = Field(
+        description=(
+            "The tranche's price as an absolute number in the instrument's quote "
+            "currency (e.g. 182.5), never a percentage or a range."
+        ),
+    )
+    # Bounds are checked by the validator, not the JSON schema: not every
+    # provider's structured mode accepts exclusive bounds.
+    size_pct: float = Field(
+        description=(
+            "How much trades at this price, as a percentage. For a Buy, the share "
+            "of the available cash (the portfolio context's cash when given, else "
+            "the capital the caller has available) committed here, so the Buy "
+            "tranches together are the whole allocation (e.g. 4, 3 and 3 for a 10% "
+            "position). For a Sell, the share of the full position (the units "
+            "already held plus every Buy in this plan) sold here; the Sell "
+            "tranches total at most 100."
+        ),
+    )
+    trigger: str = Field(
+        description=(
+            "Why this price: the level or condition it is tied to, in a few words, "
+            "e.g. 'pullback to the 50-day SMA support' or 'daily close above the "
+            "195 resistance'."
+        ),
+    )
+
+    @field_validator("price", mode="before")
+    @classmethod
+    def _price_is_a_number(cls, v):
+        return _coerce_optional_float(v)
+
+    @field_validator("size_pct", mode="before")
+    @classmethod
+    def _size_is_a_number(cls, v):
+        # "40%" is the natural way to write this field, unlike a price.
+        if isinstance(v, str):
+            v = _coerce_optional_float(v.strip().rstrip("%"))
+        if isinstance(v, (int, float)) and not 0 < v <= 100:
+            raise ValueError("a tranche's size is a percentage above 0 and at most 100")
+        return v
+
+
+def _usable_tranches(value):
+    """Drop a tranche whose price or size cannot be read, keeping the rest.
+
+    One "around 150" in a list of three tranches would otherwise fail the
+    whole decision, losing the rating and the levels the model got right.
+    """
+    if not isinstance(value, list):
+        return value
+    kept = []
+    for item in value:
+        try:
+            kept.append(Tranche.model_validate(item))
+        except (ValidationError, TypeError):
+            continue
+    return kept
+
+
+TRANCHES_DESCRIPTION = (
+    "The position plan as scaled tranches, ordered by when they would trade. "
+    "Buy tranches scale in (each a share of the available cash) and Sell "
+    "tranches scale out (each a share of the full position). For a long, "
+    "stagger two or three Buys at support or confirmation levels from the "
+    "technical report and two or three Sells at targets above them. To reduce "
+    "or exit, list Sells into strength (and any re-entry Buy below). For a Hold, "
+    "add-on Buys and trim Sells may both appear, or none. Size each tranche so "
+    "that a fill of every Buy followed by the stop costs a loss the caller can "
+    "afford. Leave the list empty if no price levels can be stated."
+)
+
+
+# The prompt text the Trader and Portfolio Manager share, so the free-text
+# fallback writes the same table the structured render does.
+SCALING_GUIDANCE = (
+    "Plan the position in tranches rather than one fill: scale in with two or "
+    "three Buys at the confirmation and support levels the technical report "
+    "names, and scale out with Sells at successive targets, so neither the "
+    "timing of one fill nor one reversal decides the result. Size each Buy as a "
+    "percentage of the available cash (the portfolio context's cash when given) "
+    "and each Sell as a percentage of the position, and keep the loss if every "
+    "Buy fills and the stop is then hit to what the conviction justifies. "
+)
+POSITION_PLAN_OUTPUT = (
+    "**Position Plan**: the tranches as a table with the columns "
+    "Tranche | Side | Price | Size | Trigger -- Side is Buy or Sell, Price an "
+    "absolute price, Size a Buy's percentage of available cash or a Sell's "
+    "percentage of the position (e.g. '4% of available cash', '50% of "
+    "position'), Trigger the level or condition behind it"
+)
+
+
+def render_position_plan(tranches: list[Tranche]) -> str:
+    """The tranches as a table, with what they add up to.
+
+    The table is what readers, the downstream agents and the console's chart
+    read, so its columns stay fixed: Tranche | Side | Price | Size | Trigger.
+    """
+    if not tranches:
+        return "**Position Plan**: not provided"
+    rows = [
+        "**Position Plan**:",
+        "",
+        "| Tranche | Side | Price | Size | Trigger |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for number, tranche in enumerate(tranches, 1):
+        basis = "of available cash" if tranche.side is TrancheSide.BUY else "of position"
+        trigger = " ".join(tranche.trigger.split()).replace("|", "/")
+        # .10g keeps a crypto price's cents and a currency pair's pips.
+        rows.append(f"| {number} | {tranche.side.value} | {tranche.price:.10g} | "
+                    f"{tranche.size_pct:.4g}% {basis} | {trigger} |")
+    bought = sum(t.size_pct for t in tranches if t.side is TrancheSide.BUY)
+    sold = sum(t.size_pct for t in tranches if t.side is TrancheSide.SELL)
+    totals = []
+    if bought:
+        totals.append(f"Buys commit {bought:.4g}% of available cash.")
+    if sold:
+        rest = max(0.0, 100 - sold)
+        totals.append(f"Sells take off {sold:.4g}% of the position"
+                      + (f"; the remaining {rest:.4g}% is left to the stop or the time horizon." if rest else "."))
+    if totals:
+        rows.extend(["", " ".join(totals)])
+    return "\n".join(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +374,17 @@ class TraderProposal(BaseModel):
         default=None,
         description="Optional sizing guidance, e.g. '5% of portfolio'.",
     )
+    tranches: list[Tranche] = Field(default_factory=list, description=TRANCHES_DESCRIPTION)
 
     @field_validator("entry_price", "stop_loss", mode="before")
     @classmethod
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
+
+    @field_validator("tranches", mode="before")
+    @classmethod
+    def _readable_tranches(cls, v):
+        return _usable_tranches(v)
 
 
 def render_trader_proposal(proposal: TraderProposal) -> str:
@@ -207,6 +406,8 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
                          ("Position Sizing", proposal.position_sizing)):
         parts.extend(["", f"**{label}**: {value if value is not None and value != '' else 'not provided'}"])
     parts.extend([
+        "",
+        render_position_plan(proposal.tranches),
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
     ])
@@ -258,11 +459,32 @@ class PortfolioDecision(BaseModel):
         default=None,
         description="Optional recommended holding period, e.g. '3-6 months'.",
     )
+    stop_loss: float | None = Field(
+        default=None,
+        description=(
+            "Optional price at which whatever the plan holds is exited, as an "
+            "absolute number in the quote currency, never a percentage. For a "
+            "long it sits below every Buy tranche; to reduce, it is the level "
+            "above which the case for selling is reassessed."
+        ),
+    )
+    tranches: list[Tranche] = Field(default_factory=list, description=TRANCHES_DESCRIPTION)
+    action_now: ExecutionStance | None = Field(default=None, description=STANCE_DESCRIPTION)
 
-    @field_validator("price_target", mode="before")
+    @field_validator("action_now", mode="before")
+    @classmethod
+    def _readable_stance(cls, v):
+        return _read_stance(v)
+
+    @field_validator("price_target", "stop_loss", mode="before")
     @classmethod
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
+
+    @field_validator("tranches", mode="before")
+    @classmethod
+    def _readable_tranches(cls, v):
+        return _usable_tranches(v)
 
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
@@ -276,6 +498,8 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     parts = [
         f"**Rating**: {decision.rating.value}",
         "",
+        f"**Action Now**: {decision.action_now.value if decision.action_now else 'not provided'}",
+        "",
         f"**Executive Summary**: {decision.executive_summary}",
         "",
         f"**Investment Thesis**: {decision.investment_thesis}",
@@ -284,7 +508,10 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     # so a reader cannot tell "no target" from "target not reported".
     target = decision.price_target if decision.price_target is not None else "not provided"
     parts.extend(["", f"**Price Target**: {target}"])
+    stop = decision.stop_loss if decision.stop_loss is not None else "not provided"
+    parts.extend(["", f"**Stop Loss**: {stop}"])
     parts.extend(["", f"**Time Horizon**: {decision.time_horizon or 'not provided'}"])
+    parts.extend(["", render_position_plan(decision.tranches)])
     return "\n".join(parts)
 
 

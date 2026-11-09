@@ -12,7 +12,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -27,6 +27,7 @@ from backend.app.settings import LLM_MAX_RETRIES, LLM_REQUEST_TIMEOUT_SECONDS, R
 from tradingagents import __version__ as CORE_VERSION
 from tradingagents.agents.rating import run_rating
 from tradingagents.backtest import iter_grid, summarize as summarize_backtest
+from tradingagents.dataflows import price_structure
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
 from tradingagents.default_config import DEFAULT_CONFIG
@@ -158,6 +159,9 @@ class MarketChartData:
     symbol: str
     as_of: str
     candles: list[dict[str, str | float]]
+    # Bars before the first candle, so a 200-day average is defined from the
+    # chart's first day instead of starting 200 sessions in.
+    history: list[dict[str, str | float]] = field(default_factory=list)
 
 
 def core_version() -> str:
@@ -170,11 +174,14 @@ def core_version() -> str:
     return CORE_VERSION or "unknown"
 
 
-def load_current_market_chart(symbol: str, limit: int = 180, since: date | None = None) -> MarketChartData:
-    """Load current daily OHLC candles through the upstream market-data path.
+def load_current_market_chart(
+    symbol: str, limit: int = 180, since: date | None = None, warmup: int = 0
+) -> MarketChartData:
+    """Load current daily OHLCV candles through the upstream market-data path.
 
     ``since`` keeps that date on the chart, with a few weeks before it, however
     long ago it was: what the price did after an analysis is how it is judged.
+    ``warmup`` returns up to that many earlier bars as ``history`` for indicators.
     """
     canonical = normalize_symbol(symbol)
     frame = load_ohlcv(symbol, date.today().isoformat())
@@ -182,20 +189,43 @@ def load_current_market_chart(symbol: str, limit: int = 180, since: date | None 
     if since is not None:
         before = int((frame["Date"] < pd.Timestamp(since)).sum())
         start = min(start, before - 40)
-    frame = frame.iloc[max(0, start):]
-    candles = [
-        {
-            "time": row.Date.strftime("%Y-%m-%d"),
-            "open": float(row.Open),
-            "high": float(row.High),
-            "low": float(row.Low),
-            "close": float(row.Close),
-        }
-        for row in frame.itertuples()
-    ]
+    start = max(0, start)
+
+    def bars(rows: pd.DataFrame) -> list[dict[str, str | float]]:
+        return [
+            {
+                "time": row.Date.strftime("%Y-%m-%d"),
+                "open": float(row.Open),
+                "high": float(row.High),
+                "low": float(row.Low),
+                "close": float(row.Close),
+                "volume": float(row.Volume) if "Volume" in rows and pd.notna(row.Volume) else 0.0,
+            }
+            for row in rows.itertuples()
+        ]
+
+    candles = bars(frame.iloc[start:])
     if not candles:
         raise RuntimeError(f"No current market candles are available for {symbol}")
-    return MarketChartData(symbol=canonical, as_of=str(candles[-1]["time"]), candles=candles)
+    history = bars(frame.iloc[max(0, start - warmup):start]) if warmup else []
+    return MarketChartData(symbol=canonical, as_of=str(candles[-1]["time"]), candles=candles,
+                           history=history)
+
+
+def load_price_structure(symbol: str, trade_date: date) -> dict[str, Any]:
+    """Weekly and monthly bars to today, and the structure read at the analysis date and now.
+
+    The read at the analysis date is the one the market analyst's
+    ``get_price_structure`` gave the run (same rules, same bars); the read now
+    is where the price stands today, for acting on the run later.
+    """
+    frame = load_ohlcv(symbol, date.today().isoformat(), fill_gaps=False)
+    analysis = price_structure.read_structure(frame, trade_date.isoformat())
+    latest = price_structure.read_structure(frame)
+    if analysis is not None and latest is not None and latest["as_of"] == analysis["as_of"]:
+        latest = None
+    return {"frames": price_structure.chart_bars(frame), "analysis": analysis, "latest": latest,
+            "stances": dict(price_structure.STANCES)}
 
 
 DATA_OUTCOMES = ("ok", "empty", "withheld", "unavailable", "error")
@@ -220,7 +250,8 @@ def data_outcome(output: Any) -> str:
         return "withheld"
     if head.startswith(("Error", "start_date", "Indicator ")) or "is not supported" in head:
         return "error"
-    if head.startswith(("No headlines", "No news found", "No market headlines", "No global news")):
+    if head.startswith(("No headlines", "No news found", "No market headlines", "No global news",
+                        "No analyst coverage")):
         return "empty"
     return "ok"
 
@@ -510,6 +541,18 @@ def portfolio_context(snapshot: dict[str, Any] | None, ticker: str) -> str | Non
     """The portfolio block the trader, risk analysts and portfolio manager read."""
     book = _portfolio(snapshot)
     return book.render(ticker) if book is not None else None
+
+
+def book_position(snapshot: dict[str, Any] | None, ticker: str) -> dict[str, Any] | None:
+    """The cash and the units of ``ticker`` in a run's book, to put amounts on its plan.
+
+    Units are summed over every spelling the broker lists the instrument under.
+    """
+    book = _portfolio(snapshot)
+    if book is None:
+        return None
+    held = book.positions_in(ticker)
+    return {"cash": book.cash, "currency": book.currency, "units": sum(p.quantity for p in held)}
 
 
 # --- one analysis -------------------------------------------------------------------

@@ -21,8 +21,8 @@ from pydantic import Field
 from backend.adapters import tradingagents_adapter as adapter
 from tradingagents.agents import context, schemas
 from tradingagents.agents.analysts import sentiment_analyst
-from tradingagents.dataflows import router
-from tradingagents.dataflows.vendors.yahoo import market as yahoo_market, snapshot
+from tradingagents.dataflows import price_structure, router
+from tradingagents.dataflows.vendors.yahoo import market as yahoo_market, snapshot, street
 
 TRADE_DATE = "2026-01-09"
 TEXT = "Report.\n\n**Rating**: Overweight\n\nFINAL TRANSACTION PROPOSAL: **BUY**"
@@ -93,6 +93,9 @@ def offline(monkeypatch):
         "Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1_000_000,
     })
     monkeypatch.setattr(snapshot, "load_ohlcv", lambda *a, **k: prices.copy())
+    # SignalDesk's own tools read their modules directly, not through the router.
+    monkeypatch.setattr(price_structure, "load_ohlcv", lambda *a, **k: prices.copy())
+    monkeypatch.setattr(street, "_fetch", lambda canonical, attribute: None)
     monkeypatch.setattr(sentiment_analyst, "fetch_stocktwits_messages", lambda *a, **k: "no posts")
     monkeypatch.setattr(sentiment_analyst, "fetch_reddit_posts", lambda *a, **k: "no posts")
     monkeypatch.setattr(yahoo_market.yf, "Ticker",

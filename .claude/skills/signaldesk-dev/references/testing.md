@@ -7,8 +7,16 @@
   `get_analyst_coverage` on PLTR (today and 2026-08-04), NXT.AX, SPY/BTC-USD (no
   coverage) read as expected. UI checked headless at 1440 and 390 px on seeded
   runs (weekly/monthly/daily zones, stance banner, key thresholds, IBKR error
-  path). Not yet run: a live LLM run using the two new tools and Action Now; a
-  real IBKR Flex statement.
+  path).
+- Live on the Claude Pro plan (Docker console, rebuilt): RKLB backtest 3 Aug /
+  1 Sep / 30 Sep 2026, Opus deep + Sonnet quick, all analysts, 1+1 rounds:
+  15-16 calls and ~210K tokens in per cell (≈ $1.16 at API prices). Every cell
+  served get_price_structure, get_analyst_coverage, statements and news; past
+  dates withheld the profile/insiders/odds. Decisions Hold (wait for
+  pullback), Underweight (take profit), Hold, into a −15…−25% slide; the
+  Underweight's sells replayed at −2.5% vs −15.1% holding. It exposed the
+  settle crash and the stance/replay fixes in commit 8e2c942. Not yet run: a
+  real IBKR Flex statement (no token saved).
 
 ## Earlier results (2026-11-03, `main`: v0.7.1 merge + data-reliability work)
 

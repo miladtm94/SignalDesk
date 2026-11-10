@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from tradingagents.dataflows.errors import VendorUnavailableError
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.market import get_closes
 
@@ -57,6 +58,17 @@ def _by_day(closes):
     return closes if tz is None else closes.tz_localize(None)
 
 
+def is_due(trade_date: str, holding_days: int = 5) -> bool:
+    """Whether a decision's holding window may have traded, so its prices are worth asking for.
+
+    The entry and holding_days more sessions all close after the decision date
+    and before today, with a day's slack for markets east of UTC: until then
+    the window cannot have traded.
+    """
+    start = datetime.strptime(trade_date, "%Y-%m-%d")
+    return (_now().tz_localize(None).normalize() - start).days >= holding_days + 1
+
+
 def fetch_returns(
     ticker: str, trade_date: str, holding_days: int = 5,
     benchmark: str = "SPY",
@@ -76,10 +88,7 @@ def fetch_returns(
     """
     start = datetime.strptime(trade_date, "%Y-%m-%d")
     today = _now().tz_localize(None).normalize()
-    # The entry and holding_days more sessions all close after the decision date
-    # and before today, with a day's slack for markets east of UTC: until then
-    # the window cannot have traded and no prices are asked for.
-    if (today - start).days < holding_days + 1:
+    if not is_due(trade_date, holding_days):
         return None, None, None, None
     # holding_days counts trading days after the entry session, so ask for the
     # calendar span they occupy (about 7 for every 5) plus a week for holidays.
@@ -131,9 +140,13 @@ class Settlement:
 
     settled: list[tuple[str, str]] = field(default_factory=list)        # (ticker, date)
     failed: list[tuple[str, str, str]] = field(default_factory=list)    # (ticker, date, reason)
+    # Why the price vendor could not be reached, when it could not: the due
+    # decisions after that one were not asked for.
+    outage: str | None = None
 
 
-def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool = True) -> Settlement:
+def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool = True,
+                   outage: str | None = None) -> Settlement:
     """Settle ``ticker``'s pending decisions whose holding window has traded.
 
     One pass at a time per log (``memory_log.settling()``), so runs sharing a log
@@ -142,8 +155,11 @@ def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool 
     Entries whose window has not traded yet are skipped; an entry whose prices
     or reflection could not be had stays pending and is reported as failed.
     With ``wait=False`` a pass already running elsewhere is left to do the work.
+    Once the price vendor cannot be reached (``outage``, or a request this pass)
+    the remaining due entries are reported failed without asking again: each
+    request would only wait out the same timeout.
     """
-    result = Settlement()
+    result = Settlement(outage=outage)
     with memory_log.settling(wait=wait) as held:
         if not held:
             return result
@@ -151,14 +167,24 @@ def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool 
         if not pending:
             return result
         benchmark = resolve_benchmark(ticker, config)
+        holding = config.get("holding_period_days", 5)
+        not_asked = 0
         for entry in pending:
+            if result.outage is not None:
+                if is_due(entry["date"], holding):
+                    result.failed.append((ticker, entry["date"], f"prices unavailable: {result.outage}"))
+                    not_asked += 1
+                continue
             try:
                 raw, alpha, days, resolution_date = fetch_returns(
-                    ticker, entry["date"], config.get("holding_period_days", 5), benchmark=benchmark,
+                    ticker, entry["date"], holding, benchmark=benchmark,
                 )
             except Exception as exc:
-                logger.warning("Prices for settling %s on %s were unavailable: %s", ticker, entry["date"], exc)
+                logger.warning("The %s decision of %s could not be scored yet (prices unavailable: %s); "
+                               "it stays pending for the next run.", ticker, entry["date"], exc)
                 result.failed.append((ticker, entry["date"], f"prices unavailable: {exc}"))
+                if isinstance(exc, VendorUnavailableError):
+                    result.outage = str(exc)
                 continue
             if raw is None:
                 continue  # the holding window has not traded yet: try again next run
@@ -179,6 +205,9 @@ def settle_pending(ticker: str, memory_log, reflector, config: dict, wait: bool 
             if memory_log.update_with_outcome(ticker, entry["date"], raw, alpha, days, reflection,
                                               resolution_date=resolution_date):
                 result.settled.append((ticker, entry["date"]))
+        if not_asked:
+            logger.warning("%d more %s decision(s) were not scored this pass while prices are unavailable; "
+                           "they stay pending for the next run.", not_asked, ticker)
     return result
 
 
@@ -186,11 +215,13 @@ def settle_all_pending(memory_log, reflector, config: dict, wait: bool = True) -
     """Settle every ticker's pending decisions whose holding window has traded (#1445).
 
     A run settles its own ticker; a ticker no longer analysed would otherwise
-    keep its decisions pending, and their lessons out of later runs.
+    keep its decisions pending, and their lessons out of later runs. A price
+    vendor that cannot be reached for one ticker is not asked again for the next.
     """
     result = Settlement()
     for ticker in dict.fromkeys(e["ticker"] for e in memory_log.get_pending_entries()):
-        done = settle_pending(ticker, memory_log, reflector, config, wait=wait)
+        done = settle_pending(ticker, memory_log, reflector, config, wait=wait, outage=result.outage)
         result.settled.extend(done.settled)
         result.failed.extend(done.failed)
+        result.outage = done.outage
     return result

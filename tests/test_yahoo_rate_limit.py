@@ -284,3 +284,50 @@ def test_a_missing_time_zone_is_not_taken_for_an_answer(yahoo):
 
     with pytest.raises(VendorUnavailableError):
         market.get_YFin_data_online("AAPL", "2026-09-21", "2026-09-25")
+
+
+def _stalls(times, answer):
+    """A request that times out ``times`` times, then answers."""
+    from curl_cffi.requests.exceptions import Timeout
+
+    calls = []
+
+    def request(**kwargs):
+        calls.append(kwargs["url"])
+        if len(calls) <= times:
+            raise Timeout("curl: (28) Operation timed out after 10002 milliseconds")
+        return answer
+
+    return request, calls
+
+
+@pytest.mark.unit
+def test_a_request_that_stalls_once_is_tried_again(monkeypatch):
+    """One stall on a slow link (a phone hotspot) failed a whole lookup; yfinance
+    retries a timed-out request only when told to, and common tells it to."""
+    import yfinance.data as yf_data
+
+    monkeypatch.setattr(yf_data._time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(YfData, "_get_cookie_and_crumb", lambda self, timeout=30: (None, "basic"))
+    answer = type("Answer", (), {"status_code": 200})()
+    request, calls = _stalls(2, answer)
+
+    assert common.yf.config.network.retries == 2
+    assert YfData()._make_request(f"{common.YAHOO_HOST}/v8/finance/chart/RKLB", request) is answer
+    assert len(calls) == 3
+
+
+@pytest.mark.unit
+def test_a_request_that_keeps_timing_out_still_fails(monkeypatch):
+    """The retries are few and short: a link that is down is reported, not waited on."""
+    import yfinance.data as yf_data
+    from curl_cffi.requests.exceptions import Timeout
+
+    waits = []
+    monkeypatch.setattr(yf_data._time, "sleep", waits.append)
+    monkeypatch.setattr(YfData, "_get_cookie_and_crumb", lambda self, timeout=30: (None, "basic"))
+    request, calls = _stalls(99, None)
+
+    with pytest.raises(Timeout):
+        YfData()._make_request(f"{common.YAHOO_HOST}/v8/finance/chart/RKLB", request)
+    assert len(calls) == 3 and sum(waits) == 3

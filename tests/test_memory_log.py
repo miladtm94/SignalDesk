@@ -1362,6 +1362,48 @@ class TestSettlementOnceAndDurably:
 
         assert result.settled == [] and "prices unavailable" in result.failed[0][2]
 
+    def test_an_unreachable_price_vendor_is_asked_once_per_pass(self, tmp_path, monkeypatch):
+        """Every request to a vendor that cannot be reached waits out the same timeout:
+        the due decisions after the first are reported, not asked for again."""
+        from tradingagents.dataflows.errors import VendorUnavailableError
+
+        log = self._log(tmp_path, monkeypatch, "2026-01-05", "2026-01-12")
+        log.store_decision("NBIS", "2026-01-05", DECISION_BUY)
+        yesterday = (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        log.store_decision("NBIS", yesterday, DECISION_BUY)
+        asked = []
+
+        def timed_out(symbol, *args):
+            asked.append(symbol)
+            raise VendorUnavailableError("Yahoo Finance request failed: Timeout")
+
+        monkeypatch.setattr(settlement, "get_closes", timed_out)
+
+        result = settlement.settle_all_pending(log, object(), {"holding_period_days": 5})
+
+        assert asked == ["AAPL"]
+        # The decision made yesterday is not due, so it did not fail.
+        assert [f[:2] for f in result.failed] == [("AAPL", "2026-01-05"), ("AAPL", "2026-01-12"),
+                                                   ("NBIS", "2026-01-05")]
+        assert all(f[2] == "prices unavailable: Yahoo Finance request failed: Timeout" for f in result.failed)
+        assert result.outage == "Yahoo Finance request failed: Timeout"
+        assert len(log.get_pending_entries()) == 4
+
+    def test_a_failure_that_is_not_an_outage_does_not_stop_the_pass(self, tmp_path, monkeypatch):
+        """Only a vendor that cannot be reached is not asked again; another failure may be the one decision's."""
+        log = self._log(tmp_path, monkeypatch, "2026-01-05", "2026-01-12")
+        asked = []
+
+        def broken(symbol, start_date, *args):
+            asked.append(start_date)
+            raise RuntimeError("unreadable prices")
+
+        monkeypatch.setattr(settlement, "get_closes", broken)
+
+        result = settlement.settle_pending("AAPL", log, object(), {"holding_period_days": 5})
+
+        assert asked == ["2026-01-05", "2026-01-12"] and len(result.failed) == 2 and result.outage is None
+
 
 @pytest.mark.unit
 def test_any_failure_to_price_a_decision_is_reported(tmp_path, monkeypatch):

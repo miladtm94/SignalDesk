@@ -57,7 +57,9 @@ Expect merge conflicts here; keep both sides.
 | `cli/selections.py` | The effort question for `claude` |
 | `tests/test_chatgpt_provider.py`, `tests/test_cli_commands.py` | The Subscription submenu lists Claude; `claude` is now a valid plan, so the invalid-plan example is `gemini` |
 | `tradingagents/output_languages.py` | Shared CLI/console language list (fork-owned file) |
-| `tradingagents/dataflows/vendors/yahoo/common.py` | `hide_yfinance_inplace_deprecations()`: silences pandas 3.1's `inplace` deprecation raised inside yfinance 1.7.0; drop it once yfinance stops using `inplace` |
+| `tradingagents/dataflows/vendors/yahoo/common.py` | `hide_yfinance_inplace_deprecations()`: silences pandas 3.1's `inplace` deprecation raised inside yfinance 1.7.0; drop it once yfinance stops using `inplace`. `yf.config.network.retries = 2`: yfinance retries a timed-out or dropped request only when told to (default 0), so one stall on a slow link failed it |
+| `tradingagents/memory/settlement.py`, `tests/test_memory_log.py` | `is_due()` split out of `fetch_returns`; a pass stops asking for prices once the vendor cannot be reached (`Settlement.outage`, carried across tickers by `settle_all_pending`), so an outage costs one timeout, not one per decision; the log line says the decision stays pending |
+| `tests/test_yahoo_rate_limit.py` | A timed-out request is retried twice, then fails |
 | `tradingagents/dataflows/vendors/google_news.py` | Google News search vendor for company and market news over any date window (fork-owned file) |
 | `tradingagents/dataflows/router.py` | Registers `google_news` for `get_news` and `get_global_news`, and `stockanalysis` for `get_fundamentals` and the three statements |
 | `tradingagents/default_config.py` | `news_data` defaults to `google_news,yfinance`: Yahoo's feed holds only recent items, so a past run had no news; `fundamental_data` ends with `stockanalysis` as the last resort |

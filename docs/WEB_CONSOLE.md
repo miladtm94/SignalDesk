@@ -194,6 +194,17 @@ and prediction-market odds. Dated records are served as of the analysis date:
 rating changes made by then, and quarters reported before that day's close. StockTwits and Reddit serve only recent
 posts, so the sentiment analyst has no social feed for a past date and says so.
 
+**Scoring past decisions.** Every analysis also scores the console's earlier
+decisions, of any ticker, whose five-session holding window has traded since:
+it compares each one's return with its benchmark and writes the lesson to the
+memory log, so the next Portfolio Manager reads it. That is why an NVDA run's
+log can mention RKLB. A request that times out or loses its connection is
+retried twice. If Yahoo still cannot be reached, the backend logs "The RKLB
+decision of 2026-10-23 could not be scored yet (prices unavailable: ...); it
+stays pending for the next run". The rest of that pass's due decisions are not
+asked for. Nothing is lost: the next analysis scores them, and the current one
+goes on with the lessons already in the log.
+
 ## Reading a report
 
 Each agent's section is shown as formatted text, with the model's wording left

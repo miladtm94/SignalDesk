@@ -59,6 +59,10 @@ def raise_for_empty(symbol: str, canonical: str, what: str) -> None:
 # yfinance answers some failed requests with an empty result, which would read as
 # "no data" for a symbol nobody checked; raised, the failure is reported as one.
 yf.config.debug.hide_exceptions = False
+# yfinance retries a request that timed out or lost its connection only when told
+# to (it defaults to none), so one stall on a slow link failed it outright. Two
+# retries, after 1s and 2s, ride out a stall; an answer Yahoo gives is not retried.
+yf.config.network.retries = 2
 
 
 def _answered_empty(exc: Exception) -> bool:

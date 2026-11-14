@@ -102,6 +102,8 @@ DB tables and every API route.
 - Upstream needs **Python ≥ 3.11**. The repo `.venv` was rebuilt on Python 3.13
   on 2026-10-23 (it had been 3.10). If `.venv/bin/python --version` is ever older
   again, the fix is `rm -rf .venv && make install web-install` — the user's call,
+  (The repo was renamed TradingAgents → SignalDesk; `make venv` now rewrites a
+  venv's recorded path, which had left `tradingagents` "command not found".)
   it is their environment; `make venv` refuses an old one. For isolated work build
   a scratch venv: `python3.13 -m venv <scratch>/venv && <scratch>/venv/bin/pip
   install -e ".[dev]" -r backend/requirements-dev.txt` (one pip run).

@@ -11,6 +11,15 @@ venv:
 		echo "Recreate it: rm -rf $(VENV) && make install web-install"; \
 		exit 1; \
 	fi
+	@# A venv writes its own path into activate and every installed command. Made
+	@# before the repo folder was renamed, `source .venv/bin/activate` puts a folder
+	@# that is gone on PATH ("command not found: tradingagents"): point them here.
+	@if [ -f $(VENV)/bin/activate ] && ! grep -q "VIRTUAL_ENV=$(CURDIR)/$(VENV)$$" $(VENV)/bin/activate; then \
+		old=$$(sed -n 's/^ *export VIRTUAL_ENV=//p' $(VENV)/bin/activate | head -1); \
+		echo "$(VENV) was made at $$old; pointing it at $(CURDIR)/$(VENV)"; \
+		grep -lI "$$old" $(VENV)/bin/* | xargs sed -i.bak "s#$$old#$(CURDIR)/$(VENV)#g"; \
+		rm -f $(VENV)/bin/*.bak; \
+	fi
 	@[ -x $(PYTHON) ] || $(BASE_PYTHON) -m venv $(VENV)
 	$(PYTHON) -m pip install --upgrade pip
 

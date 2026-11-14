@@ -55,3 +55,5 @@ merge as a migration, not a pull.
   per holding (broker aliases); health reads `tradingagents.__version__` (editable
   installs keep stale metadata); macOS suite passes. Fork fixes to upstream files
   made alongside are listed in `docs/UPSTREAM_UPGRADE.md`.
+- 2026-11-14: upstream `9fa1196` (README: Trading-R1 early access), no release;
+  clean README-only merge on `feat/swing-zones-coverage-ibkr`.

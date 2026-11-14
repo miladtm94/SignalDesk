@@ -221,6 +221,13 @@ Install the package and its dependencies (`uv pip install .` with uv):
 pip install .
 ```
 
+Or let `make install` create `.venv` and install everything for you. Then run
+`source .venv/bin/activate` in each new terminal before you use the
+`tradingagents` command, or call `.venv/bin/tradingagents` directly. If you
+rename or move the repo folder, run `make venv` once: a venv records its own
+path, and the `tradingagents` command stays "not found" until that path is
+updated.
+
 ### Docker
 
 Alternatively, run with Docker:
